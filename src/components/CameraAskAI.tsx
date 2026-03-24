@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Map, MapPin, Mic, MicOff, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import RobotFace from './RobotFace'
+import EndTripButton from './EndTripButton'
 
 /* ── Types ─────────────────────────────────────────────── */
 type AssistantState = 'listening' | 'processing' | 'speaking' | 'error' | 'idle'
@@ -415,6 +416,7 @@ export default function CameraAskAI() {
           <div className="ml-auto shrink-0 rounded-full bg-white/[0.12] px-2 py-0.5 text-[10px] font-medium text-white/80 ring-1 ring-white/[0.15]">
             {statusText}
           </div>
+          <EndTripButton />
         </div>
       </header>
 

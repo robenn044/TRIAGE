@@ -4,6 +4,7 @@ import { ArrowLeft, Send, MapPin, Loader2, ChevronLeft, Coffee, Sun, Moon, Utens
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import RobotFace from '@/components/RobotFace'
+import EndTripButton from '@/components/EndTripButton'
 
 const ALBANIAN_CITIES = [
   'Tirana', 'Durrës', 'Vlorë', 'Sarandë', 'Berat',
@@ -350,6 +351,7 @@ export default function Itinerary() {
           <div className="ml-auto shrink-0 rounded-full bg-white/[0.12] px-2 py-0.5 text-[10px] font-medium text-white/80 ring-1 ring-white/[0.15]">
             {done ? '✓ Done' : `${currentStep + 1} / ${SURVEY_STEPS.length}`}
           </div>
+          <EndTripButton />
         </div>
         <div className="h-0.5 w-full bg-white/[0.15]">
           <div className="h-full bg-white/70 transition-all duration-500" style={{ width: done ? '100%' : `${progress}%` }} />

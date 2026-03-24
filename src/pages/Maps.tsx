@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import RobotFace from '@/components/RobotFace'
+import EndTripButton from '@/components/EndTripButton'
 
 const TIMEOUT = 45_000
 
@@ -43,6 +44,7 @@ export default function Maps() {
             <h1 className="truncate text-xs font-semibold text-white">Triage</h1>
             <p className="truncate text-[10px] text-white/70">Explore the map</p>
           </div>
+          <EndTripButton />
         </div>
       </header>
 
