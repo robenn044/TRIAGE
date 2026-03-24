@@ -8,52 +8,59 @@
 }
 
 .robot-face {
-  width: 340px;
-  height: 210px;
+  width: 440px;
+  height: 270px;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: breathe 4s ease-in-out infinite;
+  animation: breathe 4.5s ease-in-out infinite;
   cursor: pointer;
   user-select: none;
+  transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity  0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.robot-face.leaving {
+  transform: scale(0.82);
+  opacity: 0;
 }
 
 .robot-features {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 48px;
+  gap: 60px;
 }
 
 .led {
   background: #ffffff;
   filter:
-    drop-shadow(0 0 12px rgba(255, 255, 255, 1))
-    drop-shadow(0 0 34px rgba(255, 255, 255, 0.78))
-    drop-shadow(0 0 72px rgba(255, 255, 255, 0.42))
-    drop-shadow(0 0 120px rgba(255, 255, 255, 0.2));
+    drop-shadow(0 0 14px rgba(255, 255, 255, 1))
+    drop-shadow(0 0 38px rgba(255, 255, 255, 0.78))
+    drop-shadow(0 0 80px rgba(255, 255, 255, 0.42))
+    drop-shadow(0 0 130px rgba(255, 255, 255, 0.2));
   transition:
-    width       0.45s cubic-bezier(0.34, 1.38, 0.64, 1),
-    height      0.45s cubic-bezier(0.34, 1.38, 0.64, 1),
-    border-radius 0.42s ease,
-    transform   0.42s cubic-bezier(0.34, 1.38, 0.64, 1),
-    filter      0.5s ease;
+    width       0.65s cubic-bezier(0.25, 1, 0.5, 1),
+    height      0.65s cubic-bezier(0.25, 1, 0.5, 1),
+    border-radius 0.6s cubic-bezier(0.25, 1, 0.5, 1),
+    transform   0.6s cubic-bezier(0.25, 1, 0.5, 1),
+    filter      0.6s ease;
 }
 
 .robot-eye {
-  width: 52px;
-  height: 76px;
+  width: 66px;
+  height: 96px;
   border-radius: 50%;
 }
 
 .robot-eye.blinking {
-  animation: blink 0.22s ease-in-out forwards;
+  animation: blink 0.24s ease-in-out forwards;
 }
 
 .robot-mouth {
-  width: 110px;
-  height: 44px;
-  border-radius: 0 0 36px 36px;
+  width: 136px;
+  height: 54px;
+  border-radius: 0 0 44px 44px;
 }
 
 /* hover glow boost */
@@ -65,36 +72,36 @@
     drop-shadow(0 0 165px rgba(255, 255, 255, 0.3));
 }
 
-/* ── Expressions ── */
+/* ── Expressions (scaled up) ── */
 
-.expr-happy .robot-eye   { width: 52px; height: 76px; border-radius: 50%; transform: none; }
-.expr-happy .robot-mouth { width: 110px; height: 44px; border-radius: 0 0 36px 36px; transform: none; }
+.expr-happy .robot-eye   { width: 66px; height: 96px; border-radius: 50%; transform: none; }
+.expr-happy .robot-mouth { width: 136px; height: 54px; border-radius: 0 0 44px 44px; transform: none; }
 
-.expr-surprised .robot-eye   { width: 64px; height: 90px; border-radius: 50%; transform: translateY(-5px); }
-.expr-surprised .robot-mouth { width: 56px; height: 56px; border-radius: 50%; transform: none; }
+.expr-surprised .robot-eye   { width: 80px; height: 112px; border-radius: 50%; transform: translateY(-6px); }
+.expr-surprised .robot-mouth { width: 70px; height: 70px; border-radius: 50%; transform: none; }
 
-.expr-sad .robot-eye   { width: 50px; height: 66px; border-radius: 50% 50% 50% 50% / 38% 38% 62% 62%; transform: translateY(5px); }
-.expr-sad .robot-mouth { width: 100px; height: 40px; border-radius: 36px 36px 0 0; transform: translateY(14px); }
+.expr-sad .robot-eye   { width: 62px; height: 82px; border-radius: 50% 50% 50% 50% / 38% 38% 62% 62%; transform: translateY(6px); }
+.expr-sad .robot-mouth { width: 124px; height: 50px; border-radius: 44px 44px 0 0; transform: translateY(16px); }
 
-.expr-sleepy .robot-eye   { width: 52px; height: 36px; border-radius: 50% 50% 50% 50% / 68% 68% 32% 32%; transform: none; }
-.expr-sleepy .robot-mouth { width: 78px; height: 24px; border-radius: 0 0 18px 18px; transform: none; }
+.expr-sleepy .robot-eye   { width: 66px; height: 44px; border-radius: 50% 50% 50% 50% / 68% 68% 32% 32%; transform: none; }
+.expr-sleepy .robot-mouth { width: 96px; height: 30px; border-radius: 0 0 22px 22px; transform: none; }
 
-.expr-excited .robot-eye   { width: 60px; height: 86px; border-radius: 50%; transform: translateY(-5px); }
-.expr-excited .robot-mouth { width: 134px; height: 58px; border-radius: 0 0 52px 52px; transform: none; }
+.expr-excited .robot-eye   { width: 76px; height: 108px; border-radius: 50%; transform: translateY(-6px); }
+.expr-excited .robot-mouth { width: 166px; height: 72px; border-radius: 0 0 64px 64px; transform: none; }
 
-.expr-smirk .robot-eye   { width: 52px; height: 76px; border-radius: 50%; transform: none; }
-.expr-smirk .robot-mouth { width: 100px; height: 40px; border-radius: 0 0 36px 8px; transform: rotate(-6deg); }
+.expr-smirk .robot-eye   { width: 66px; height: 96px; border-radius: 50%; transform: none; }
+.expr-smirk .robot-mouth { width: 124px; height: 50px; border-radius: 0 0 44px 10px; transform: rotate(-6deg); }
 
-.expr-neutral .robot-eye   { width: 52px; height: 76px; border-radius: 50%; transform: none; }
-.expr-neutral .robot-mouth { width: 96px; height: 20px; border-radius: 6px; transform: none; }
+.expr-neutral .robot-eye   { width: 66px; height: 96px; border-radius: 50%; transform: none; }
+.expr-neutral .robot-mouth { width: 120px; height: 24px; border-radius: 8px; transform: none; }
 
 /* ── Keyframes ── */
 
 @keyframes breathe {
-  0%   { transform: scale(1)     translateY(0px); }
-  42%  { transform: scale(1.026) translateY(-7px); }
-  58%  { transform: scale(1.026) translateY(-7px); }
-  100% { transform: scale(1)     translateY(0px); }
+  0%   { transform: scale(1)     translateY(0); }
+  42%  { transform: scale(1.022) translateY(-8px); }
+  58%  { transform: scale(1.022) translateY(-8px); }
+  100% { transform: scale(1)     translateY(0); }
 }
 
 @keyframes blink {

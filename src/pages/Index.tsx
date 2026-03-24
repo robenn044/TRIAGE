@@ -10,13 +10,13 @@ const Index = () => {
     setLeaving(true)
     const returnPath = sessionStorage.getItem('lockReturnPath') || '/dashboard'
     sessionStorage.removeItem('lockReturnPath')
-    setTimeout(() => navigate(returnPath), 500)
+    setTimeout(() => navigate(returnPath), 350)
   }
 
   return (
     <div
       className="flex min-h-screen bg-[#20a7db]"
-      style={{ opacity: leaving ? 0 : 1, transition: 'opacity 500ms ease' }}
+      style={{ opacity: leaving ? 0 : 1, transition: 'opacity 700ms cubic-bezier(0.4,0,0.2,1)' }}
     >
       <RobotFace onUnlock={handleUnlock} />
     </div>

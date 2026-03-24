@@ -398,8 +398,8 @@ export default function CameraAskAI() {
     <div className="flex h-screen flex-col overflow-hidden bg-[#f4fbfe]">
       {/* ── Blue fade-in overlay ────── */}
       <div
-        className="pointer-events-none fixed inset-0 z-50 bg-[#20a7db] transition-opacity ease-out"
-        style={{ opacity: entered ? 0 : 1, transitionDuration: '650ms' }}
+        className="pointer-events-none fixed inset-0 z-50 bg-[#20a7db]"
+        style={{ opacity: entered ? 0 : 1, transition: 'opacity 800ms cubic-bezier(0.4,0,0.2,1)' }}
       />
 
       {/* ── Header ── */}

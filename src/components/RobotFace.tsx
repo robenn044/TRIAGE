@@ -22,6 +22,7 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
   const [expression, setExpression] = useState<Expression>("happy");
   const [blinking, setBlinking] = useState(false);
   const [squishing, setSquishing] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   const blinkRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exprRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,7 +57,7 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
       const next = pickNext(current);
       setExpression(next);
       scheduleExpression(next);
-    }, 4500 + Math.random() * 5000);
+    }, 5500 + Math.random() * 5500);
   }, []);
 
   useEffect(() => {
@@ -70,7 +71,8 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
 
   const handleClick = () => {
     if (onUnlock) {
-      onUnlock();
+      setLeaving(true);
+      setTimeout(() => onUnlock(), 600);
       return;
     }
     setSquishing(true);
@@ -95,8 +97,8 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
   return (
     <div className="robot-face-wrapper">
       <div
-        className={`robot-face expr-${expression}`}
-        style={squishing ? { animation: "squish 0.38s cubic-bezier(0.34,1.56,0.64,1) forwards" } : undefined}
+        className={`robot-face expr-${expression}${leaving ? " leaving" : ""}`}
+        style={squishing && !leaving ? { animation: "squish 0.38s cubic-bezier(0.34,1.56,0.64,1) forwards" } : undefined}
         onClick={handleClick}
       >
         <div className="robot-features">
