@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useState, useEffect, useRef, CSSProperties } from 'react'
 import './RobotFace.css'
 
 const EXPRESSIONS = [
@@ -8,20 +8,16 @@ const EXPRESSIONS = [
   { name: 'confused', weight: 10 },
   { name: 'scared', weight: 6 },
   { name: 'sleepy', weight: 5 },
-] as const
+]
 
-type Expression = (typeof EXPRESSIONS)[number]['name']
-
-function pickExpression(current: Expression): Expression {
-  const pool = EXPRESSIONS.filter((entry) => entry.name !== current)
-  const total = pool.reduce((sum, entry) => sum + entry.weight, 0)
-  let random = Math.random() * total
-
-  for (const entry of pool) {
-    random -= entry.weight
-    if (random <= 0) return entry.name
+function pickExpression(current: string) {
+  const pool = EXPRESSIONS.filter(e => e.name !== current)
+  const total = pool.reduce((s, e) => s + e.weight, 0)
+  let r = Math.random() * total
+  for (const e of pool) {
+    r -= e.weight
+    if (r <= 0) return e.name
   }
-
   return 'idle'
 }
 
@@ -32,25 +28,26 @@ interface RobotFaceProps {
 }
 
 export default function RobotFace({ onUnlock, mini = false, visible = true }: RobotFaceProps) {
-  const [expression, setExpression] = useState<Expression>('idle')
-  const [unlocking, setUnlocking] = useState(false)
+  const [expression, setExpression] = useState('idle')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
 
   useEffect(() => {
-    if (visible) {
+    if (visible && unlocking) {
       setUnlocking(false)
       setExpression('idle')
     }
-  }, [visible])
+  }, [visible, unlocking])
 
   useEffect(() => {
     if (mini || unlocking) return
-
     const isIdle = expression === 'idle'
-    const delay = isIdle ? 4000 + Math.random() * 4000 : 2000 + Math.random() * 2000
+    const delay = isIdle
+      ? 4000 + Math.random() * 4000
+      : 2000 + Math.random() * 2000
 
     timerRef.current = setTimeout(() => {
-      setExpression((current) => pickExpression(current))
+      setExpression(pickExpression(expression))
     }, delay)
 
     return () => {
@@ -58,40 +55,55 @@ export default function RobotFace({ onUnlock, mini = false, visible = true }: Ro
     }
   }, [expression, mini, unlocking])
 
-  const handleUnlock = () => {
+  const handleClick = () => {
     if (!onUnlock || mini || unlocking) return
     setUnlocking(true)
     setExpression('happy')
     setTimeout(() => onUnlock(), 280)
   }
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      handleUnlock()
-    }
-  }
-
   return (
     <div
-      className={`robot-face-wrapper ${mini ? 'mini' : ''}`}
-      onClick={handleUnlock}
-      onKeyDown={handleKeyDown}
+      className={`robot-face-wrapper ${mini ? 'mini' : ''} ${unlocking ? 'unlocking' : ''}`}
+      onClick={handleClick}
       role={onUnlock && !mini ? 'button' : undefined}
       tabIndex={onUnlock && !mini ? 0 : undefined}
       aria-label={mini ? 'Triage robot' : 'Tap to begin your tour'}
     >
       {!mini && (
         <div className="particles" aria-hidden="true">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <span key={index} className="particle" style={{ '--i': index } as CSSProperties} />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <span key={i} className="particle" style={{ '--i': i } as CSSProperties} />
           ))}
+        </div>
+      )}
+
+      {!mini && (
+        <div className="wheat-hat" aria-hidden="true">
+          <div className="hat-crown">
+            <div className="hat-band" />
+            <div className="hat-crease" />
+          </div>
+          <div className="hat-brim" />
+          <div className="hat-wheat-sprig">
+            <div className="sprig-stem" />
+            <div className="sprig-head">
+              <span className="sprig-grain" />
+              <span className="sprig-grain" />
+              <span className="sprig-grain" />
+              <span className="sprig-grain" />
+              <span className="sprig-grain" />
+            </div>
+          </div>
         </div>
       )}
 
       <section className={`robot-face ${expression}`} aria-label="Robot face">
         <div className="eye left-eye">
-          <span className="eye-core" />
+          <div className="eye-iris">
+            <span className="eye-glint" />
+            <span className="eye-glint-sm" />
+          </div>
           <div className="eye-lid" />
         </div>
 
@@ -102,12 +114,17 @@ export default function RobotFace({ onUnlock, mini = false, visible = true }: Ro
         </div>
 
         <div className="eye right-eye">
-          <span className="eye-core" />
+          <div className="eye-iris">
+            <span className="eye-glint" />
+            <span className="eye-glint-sm" />
+          </div>
           <div className="eye-lid" />
         </div>
       </section>
 
-      {!mini && !unlocking && !!onUnlock && <p className="tap-hint">Tap to begin</p>}
+      {!mini && !unlocking && !!onUnlock && (
+        <p className="tap-hint">Tap to begin</p>
+      )}
     </div>
   )
 }
