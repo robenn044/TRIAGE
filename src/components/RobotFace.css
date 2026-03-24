@@ -1,517 +1,363 @@
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Robot Face Wrapper ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .robot-face-wrapper {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    min-height: 100%;
-    cursor: pointer;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-    z-index: 2;
-    will-change: transform, opacity;
+  position: relative;
+  display: flex;
+  min-height: 100%;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* Soft radial glow behind the face */
 .robot-face-wrapper:not(.mini)::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: clamp(320px, 50vw, 700px);
-    height: clamp(320px, 50vw, 700px);
-    background: radial-gradient(circle at center,
-            rgba(56, 189, 248, 0.12) 0%,
-            rgba(2, 132, 199, 0.06) 40%,
-            transparent 70%);
-    border-radius: 50%;
-    z-index: -1;
-    pointer-events: none;
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: -1;
+  height: clamp(320px, 52vw, 720px);
+  width: clamp(320px, 52vw, 720px);
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.08) 34%,
+    transparent 72%
+  );
+  pointer-events: none;
 }
 
-.robot-face-wrapper:not(.mini):hover .robot-face {
-    transform: scale(1.03);
-}
-
-.robot-face-wrapper:not(.mini):active .robot-face {
-    transform: translateY(-3px) scale(0.97);
-}
-
-/* Tap hint */
-.tap-hint {
-    margin-top: 52px;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(2, 132, 199, 0.4);
-    animation: hintPulse 2.5s ease-in-out infinite;
-}
-
-@keyframes hintPulse {
-    0%, 100% { opacity: 0.35; transform: translateY(0); }
-    50% { opacity: 0.65; transform: translateY(-3px); }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Unlocking ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
-.robot-face-wrapper.unlocking {
-    animation: wrapperUnlock 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-    pointer-events: none;
-}
-
-.robot-face-wrapper.unlocking .robot-face { animation: none !important; }
-.robot-face-wrapper.unlocking .tap-hint { opacity: 0; transition: opacity 150ms; }
-.robot-face-wrapper.unlocking .particles { opacity: 0; transition: opacity 300ms; }
-.robot-face-wrapper.unlocking::after { opacity: 0; transition: opacity 400ms ease; }
-
-@keyframes wrapperUnlock {
-    0% { transform: scale(1); opacity: 1; }
-    40% { transform: scale(1.06); opacity: 0.8; }
-    100% { transform: scale(1.15); opacity: 0; }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Floating Particles ΓÇö soft dots ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .particles {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .particle {
-    position: absolute;
-    border-radius: 50%;
-    background: rgba(2, 132, 199, 0.2);
-    animation: floatUp 16s ease-in-out infinite;
-    animation-delay: calc(var(--i) * -2.5s);
+  position: absolute;
+  bottom: -8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.32);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.28);
+  animation: float-up 16s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -2.2s);
 }
 
-.particle:nth-child(1) { left: 15%; bottom: -6px; width: 4px; height: 4px; background: rgba(56, 189, 248, 0.3); }
-.particle:nth-child(2) { left: 32%; bottom: -6px; width: 6px; height: 6px; }
-.particle:nth-child(3) { left: 52%; bottom: -6px; width: 3px; height: 3px; background: rgba(56, 189, 248, 0.25); }
-.particle:nth-child(4) { left: 70%; bottom: -6px; width: 5px; height: 5px; }
-.particle:nth-child(5) { left: 86%; bottom: -6px; width: 4px; height: 4px; background: rgba(56, 189, 248, 0.2); }
-.particle:nth-child(6) { left: 44%; bottom: -6px; width: 7px; height: 7px; background: rgba(2, 132, 199, 0.15); }
-
-@keyframes floatUp {
-    0% { transform: translateY(0) scale(1); opacity: 0; }
-    8% { opacity: 0.6; }
-    50% { opacity: 0.25; }
-    100% { transform: translateY(-100vh) scale(0.2); opacity: 0; }
+.particle:nth-child(1) {
+  left: 16%;
+  height: 5px;
+  width: 5px;
 }
 
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Face Container ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+.particle:nth-child(2) {
+  left: 32%;
+  height: 7px;
+  width: 7px;
+}
+
+.particle:nth-child(3) {
+  left: 46%;
+  height: 4px;
+  width: 4px;
+}
+
+.particle:nth-child(4) {
+  left: 61%;
+  height: 6px;
+  width: 6px;
+}
+
+.particle:nth-child(5) {
+  left: 78%;
+  height: 5px;
+  width: 5px;
+}
+
+.particle:nth-child(6) {
+  left: 89%;
+  height: 8px;
+  width: 8px;
+}
+
+@keyframes float-up {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 0.7;
+  }
+
+  55% {
+    opacity: 0.28;
+  }
+
+  100% {
+    transform: translateY(-96vh) scale(0.35);
+    opacity: 0;
+  }
+}
+
 .robot-face {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: clamp(14px, 2.5vw, 32px);
-    z-index: 1;
-    animation: breathe 4s ease-in-out infinite;
-    transition: transform 300ms ease;
-    /* Soft face plate */
-    background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(224,249,255,0.5) 100%);
-    padding: clamp(28px, 4vw, 56px) clamp(36px, 6vw, 80px);
-    border-radius: 50%;
-    box-shadow:
-        0 8px 40px rgba(2, 132, 199, 0.08),
-        0 2px 12px rgba(0, 0, 0, 0.04),
-        inset 0 -2px 8px rgba(2, 132, 199, 0.05);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(22px, 5vw, 58px);
+  padding: clamp(24px, 4vw, 52px) clamp(20px, 5vw, 54px);
+  animation: breathe 4.2s ease-in-out infinite;
 }
 
 @keyframes breathe {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
-/* Ambient glow */
-.robot-face::before {
-    content: '';
-    position: absolute;
-    width: 120%;
-    height: 120%;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    background: radial-gradient(ellipse, rgba(56, 189, 248, 0.08) 0%, transparent 60%);
-    z-index: -1;
-    pointer-events: none;
-    border-radius: 50%;
-    animation: pulseGlow 4s ease-in-out infinite;
-}
-
-@keyframes pulseGlow {
-    0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.08); }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Eyes ΓÇö Circular, modern ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .eye {
-    width: clamp(52px, 6.5vw, 96px);
-    height: clamp(52px, 6.5vw, 96px);
-    position: relative;
-    border-radius: 50%;
-    background: linear-gradient(145deg, #0284C7 0%, #0EA5E9 60%, #38BDF8 100%);
-    box-shadow:
-        0 4px 20px rgba(2, 132, 199, 0.25),
-        0 0 0 4px rgba(224, 249, 255, 0.8),
-        inset 0 2px 8px rgba(255, 255, 255, 0.15),
-        inset 0 -3px 8px rgba(0, 60, 120, 0.15);
-    overflow: hidden;
-    transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 300ms ease;
+  position: relative;
+  height: clamp(52px, 7vw, 82px);
+  width: clamp(92px, 12vw, 132px);
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 0 18px rgba(255, 255, 255, 0.95),
+    0 0 42px rgba(255, 255, 255, 0.45),
+    inset 0 -5px 10px rgba(220, 244, 255, 0.92);
+  transition:
+    transform 260ms ease,
+    width 260ms ease,
+    height 260ms ease,
+    border-radius 260ms ease,
+    opacity 260ms ease;
 }
 
-/* Highlight arc */
-.eye::after {
-    content: '';
-    position: absolute;
-    top: 6%;
-    left: 15%;
-    right: 15%;
-    height: 35%;
-    border-radius: 50%;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, transparent 100%);
-    pointer-events: none;
+.eye-core {
+  position: absolute;
+  inset: 18% 10%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(231, 248, 255, 0.9) 100%);
 }
 
-.eye-iris {
-    position: absolute;
-    inset: 20%;
-    border-radius: 50%;
-    background: radial-gradient(circle at 40% 40%, rgba(255,255,255,0.08) 0%, rgba(0, 40, 80, 0.12) 100%);
+.eye::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: 2;
+  transform: scaleY(0);
+  transform-origin: center center;
+  border-radius: inherit;
+  background: #20a7db;
+  animation: eye-blink 5.4s ease-in-out infinite;
 }
 
-.eye-glint {
-    position: absolute;
-    width: clamp(10px, 1.6vw, 20px);
-    height: clamp(10px, 1.6vw, 20px);
-    top: clamp(8px, 1.2vw, 16px);
-    right: clamp(8px, 1.2vw, 16px);
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
-    animation: glintPulse 3s ease-in-out infinite;
+@keyframes eye-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(0);
+  }
+
+  95%,
+  97% {
+    transform: scaleY(1);
+  }
 }
 
-.eye-glint-sm {
-    position: absolute;
-    width: clamp(5px, 0.7vw, 9px);
-    height: clamp(5px, 0.7vw, 9px);
-    bottom: clamp(12px, 1.8vw, 22px);
-    left: clamp(10px, 1.4vw, 18px);
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.45);
-}
-
-@keyframes glintPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(0.85); }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Eye Lid ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .eye-lid {
-    position: absolute;
-    top: -2px; left: -2px; right: -2px;
-    height: 0%;
-    background: linear-gradient(180deg, #0369A1, #0284C7);
-    border-radius: 50% 50% 0 0;
-    z-index: 2;
-    transition: height 120ms ease-in;
-    animation: blink 5s ease-in-out infinite;
+  display: none;
 }
 
-@keyframes blink {
-    0%, 92%, 100% { height: 0%; }
-    95%, 97% { height: 100%; }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Mouth ΓÇö Pill shape ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .mouth-wrap {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mouth {
-    width: clamp(30px, 3.5vw, 56px);
-    height: clamp(12px, 1.5vw, 22px);
-    border-radius: 100px;
-    background: linear-gradient(90deg, #0284C7 0%, #38BDF8 50%, #0284C7 100%);
-    box-shadow:
-        0 3px 12px rgba(2, 132, 199, 0.18),
-        inset 0 -2px 4px rgba(0, 60, 120, 0.12),
-        inset 0 1px 4px rgba(255, 255, 255, 0.1);
-    position: relative;
-    overflow: hidden;
-    transition: height 400ms cubic-bezier(0.34, 1.56, 0.64, 1),
-        border-radius 400ms ease, width 400ms ease,
-        transform 400ms ease, opacity 400ms ease;
+  position: relative;
+  height: clamp(14px, 1.8vw, 22px);
+  width: clamp(54px, 7vw, 92px);
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 0 14px rgba(255, 255, 255, 0.8),
+    0 0 28px rgba(255, 255, 255, 0.28),
+    inset 0 -3px 8px rgba(220, 244, 255, 0.8);
+  transition:
+    transform 260ms ease,
+    width 260ms ease,
+    height 260ms ease,
+    border-radius 260ms ease,
+    opacity 260ms ease;
 }
 
 .mouth-inner {
-    position: absolute;
-    top: 0; left: 15%; right: 15%;
-    height: 50%;
-    border-radius: 0 0 40px 40px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, transparent 100%);
-}
-
-/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
-   Wheat Hat ΓÇö redesigned as a small cap/antenna
-   ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */
-.wheat-hat {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: -8px;
-    z-index: 3;
-    pointer-events: none;
-}
-
-/* Small antenna dot */
-.hat-crown {
-    position: relative;
-    width: clamp(10px, 1.2vw, 16px);
-    height: clamp(10px, 1.2vw, 16px);
-    background: linear-gradient(145deg, #38BDF8, #0284C7);
-    border-radius: 50%;
-    z-index: 1;
-    box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
-    animation: antennaPulse 2s ease-in-out infinite;
-}
-
-@keyframes antennaPulse {
-    0%, 100% { box-shadow: 0 0 12px rgba(56, 189, 248, 0.4); }
-    50% { box-shadow: 0 0 20px rgba(56, 189, 248, 0.7), 0 0 40px rgba(56, 189, 248, 0.2); }
-}
-
-.hat-band { display: none; }
-.hat-crease { display: none; }
-
-/* Antenna stem */
-.hat-brim {
-    width: 2px;
-    height: clamp(16px, 2vw, 28px);
-    background: linear-gradient(180deg, #38BDF8, rgba(2, 132, 199, 0.3));
-    border-radius: 1px;
-    margin-top: 0;
-}
-
-.hat-brim::before { display: none; }
-.hat-brim::after { display: none; }
-
-/* Hide sprig */
-.hat-wheat-sprig { display: none; }
-
-/* ΓöÇΓöÇΓöÇ Unlocking ΓöÇΓöÇΓöÇ */
-.robot-face-wrapper.unlocking .wheat-hat {
-    animation: faceUnlock 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
-}
-
-@keyframes faceUnlock {
-    0% { transform: scale(1); opacity: 1; }
-    100% { transform: scale(1.2) translateY(-30px); opacity: 0; }
-}
-
-/* ΓöÇΓöÇΓöÇ Antenna Expression Variants ΓöÇΓöÇΓöÇ */
-.robot-face.happy~.wheat-hat,
-.robot-face-wrapper:has(.robot-face.happy) .wheat-hat {
-    animation: hatBounce 2s ease-in-out infinite;
-}
-
-@keyframes hatBounce {
-    0%, 100% { transform: translateY(0); }
-    25% { transform: translateY(-6px); }
-    75% { transform: translateY(-3px); }
-}
-
-.robot-face.scared~.wheat-hat,
-.robot-face-wrapper:has(.robot-face.scared) .wheat-hat {
-    animation: hatShiver 0.15s ease-in-out 8;
-}
-
-@keyframes hatShiver {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-2px); }
-    75% { transform: translateX(2px); }
-}
-
-.robot-face.confused~.wheat-hat,
-.robot-face-wrapper:has(.robot-face.confused) .wheat-hat {
-    animation: hatWobble 0.6s ease-in-out 3;
-}
-
-@keyframes hatWobble {
-    0%, 100% { transform: rotate(0deg); }
-    25% { transform: rotate(8deg); }
-    75% { transform: rotate(-8deg); }
-}
-
-.robot-face.sleepy~.wheat-hat,
-.robot-face-wrapper:has(.robot-face.sleepy) .wheat-hat {
-    animation: hatDroop 4s ease-in-out infinite;
-    opacity: 0.5;
-}
-
-@keyframes hatDroop {
-    0%, 100% { transform: translateY(2px); opacity: 0.4; }
-    50% { transform: translateY(0); opacity: 0.6; }
-}
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Expressions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
-.robot-face.happy .mouth {
-    width: clamp(40px, 4.5vw, 72px);
-    height: clamp(20px, 2.5vw, 38px);
-    border-radius: 8px 8px 100px 100px;
-    box-shadow:
-        0 5px 18px rgba(2, 132, 199, 0.25),
-        inset 0 -2px 6px rgba(0, 60, 120, 0.15),
-        inset 0 1px 4px rgba(255, 255, 255, 0.1);
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, transparent 100%);
 }
 
 .robot-face.happy .eye {
-    transform: scaleY(0.8);
-    box-shadow:
-        0 4px 24px rgba(2, 132, 199, 0.3),
-        0 0 0 4px rgba(224, 249, 255, 0.9),
-        inset 0 2px 8px rgba(255, 255, 255, 0.15),
-        inset 0 -3px 8px rgba(0, 60, 120, 0.15);
+  transform: scaleY(0.78);
 }
 
-.robot-face.curious .eye.left-eye { transform: scale(1.08) translateX(3px); }
-.robot-face.curious .eye.right-eye { transform: scale(1.08) translateX(-3px); }
+.robot-face.happy .mouth {
+  height: clamp(26px, 3.2vw, 38px);
+  width: clamp(72px, 9vw, 116px);
+  border-radius: 0 0 999px 999px;
+}
+
+.robot-face.curious .left-eye {
+  transform: translateX(6px) scale(1.03);
+}
+
+.robot-face.curious .right-eye {
+  transform: translateX(-6px) scale(1.03);
+}
 
 .robot-face.curious .mouth {
-    width: clamp(18px, 2vw, 32px);
-    height: clamp(18px, 2vw, 32px);
-    border-radius: 50%;
+  height: clamp(18px, 2.2vw, 28px);
+  width: clamp(28px, 3vw, 40px);
+  border-radius: 999px;
 }
 
 .robot-face.confused {
-    animation: breathe 4s ease-in-out infinite, wobble 0.6s ease-in-out 3;
+  transform: rotate(-3deg);
 }
 
-.robot-face.confused .eye.left-eye { transform: translateY(-5px) scale(1.05); }
-.robot-face.confused .eye.right-eye { transform: translateY(3px) scale(0.92); }
+.robot-face.confused .left-eye {
+  transform: translateY(-5px) scaleX(0.9);
+}
+
+.robot-face.confused .right-eye {
+  transform: translateY(4px) scaleX(1.05);
+}
 
 .robot-face.confused .mouth {
-    width: clamp(32px, 3.5vw, 56px);
-    height: clamp(10px, 1.2vw, 18px);
-    border-radius: 4px;
-    transform: rotate(-5deg);
-}
-
-@keyframes wobble {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    25% { transform: translateY(-3px) rotate(2deg); }
-    75% { transform: translateY(-3px) rotate(-2deg); }
-}
-
-.robot-face.scared {
-    animation: breathe 4s ease-in-out infinite, shiver 0.15s ease-in-out 8;
+  height: clamp(12px, 1.5vw, 18px);
+  width: clamp(54px, 6vw, 84px);
+  transform: rotate(-10deg);
+  border-radius: 10px;
 }
 
 .robot-face.scared .eye {
-    transform: scale(0.82);
-    box-shadow:
-        0 4px 24px rgba(2, 132, 199, 0.35),
-        0 0 0 5px rgba(224, 249, 255, 0.9),
-        inset 0 2px 8px rgba(255, 255, 255, 0.15);
-}
-
-.robot-face.scared .eye-glint {
-    width: clamp(14px, 2vw, 26px) !important;
-    height: clamp(14px, 2vw, 26px) !important;
-    animation: none;
-    opacity: 1;
+  transform: scale(1.06);
 }
 
 .robot-face.scared .mouth {
-    width: clamp(16px, 1.8vw, 28px);
-    height: clamp(16px, 1.8vw, 28px);
-    border-radius: 50%;
+  height: clamp(24px, 2.6vw, 34px);
+  width: clamp(24px, 2.6vw, 34px);
+  border-radius: 999px;
 }
 
-@keyframes shiver {
-    0%, 100% { transform: translateX(0) translateY(0); }
-    25% { transform: translateX(-2px) translateY(-1px); }
-    75% { transform: translateX(2px) translateY(1px); }
+.robot-face.sleepy .eye::before {
+  animation: none;
+  transform: scaleY(0.55);
+  transform-origin: center top;
 }
-
-.robot-face.sleepy .eye-lid {
-    height: 55% !important;
-    animation: none;
-    transition: height 600ms ease;
-}
-
-.robot-face.sleepy .eye { transform: scaleY(0.9); }
 
 .robot-face.sleepy .mouth {
-    width: clamp(24px, 2.5vw, 40px);
-    height: clamp(8px, 1vw, 14px);
-    border-radius: 100px;
-    opacity: 0.65;
+  width: clamp(42px, 5vw, 70px);
+  opacity: 0.7;
 }
 
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Mini Mode ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+.tap-hint {
+  margin-top: 38px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.84);
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.22);
+  animation: hint-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: translateY(0);
+  }
+
+  50% {
+    opacity: 0.82;
+    transform: translateY(-3px);
+  }
+}
+
 .robot-face-wrapper.mini {
-    width: auto;
-    min-height: auto;
-    cursor: default;
+  min-height: auto;
+  width: auto;
+  cursor: default;
+}
+
+.robot-face-wrapper.mini::after,
+.robot-face-wrapper.mini .particles,
+.robot-face-wrapper.mini .tap-hint {
+  display: none;
 }
 
 .robot-face-wrapper.mini .robot-face {
-    gap: 5px;
-    animation: none;
-    padding: 6px 10px;
-    background: transparent;
-    box-shadow: none;
+  gap: 5px;
+  padding: 0;
+  animation: none;
 }
-
-.robot-face-wrapper.mini .robot-face::before { display: none; }
 
 .robot-face-wrapper.mini .eye {
-    width: 16px; height: 16px;
-    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.2);
+  height: 10px;
+  width: 18px;
+  box-shadow:
+    0 0 8px rgba(255, 255, 255, 0.85),
+    0 0 16px rgba(255, 255, 255, 0.28);
 }
 
-.robot-face-wrapper.mini .eye::after { display: none; }
-
-.robot-face-wrapper.mini .eye-iris,
-.robot-face-wrapper.mini .eye-glint-sm { display: none; }
-
-.robot-face-wrapper.mini .eye-glint {
-    width: 4px !important; height: 4px !important;
-    top: 3px !important; right: 3px !important;
-    border-radius: 50%;
-    animation: none;
+.robot-face-wrapper.mini .eye::before,
+.robot-face-wrapper.mini .eye-core {
+  display: none;
 }
-
-.robot-face-wrapper.mini .eye-lid { display: none; }
-.robot-face-wrapper.mini .mouth-wrap { padding-top: 0; }
 
 .robot-face-wrapper.mini .mouth {
-    width: 14px; height: 5px;
-    border-radius: 100px;
-    box-shadow: none;
+  height: 5px;
+  width: 16px;
+  box-shadow:
+    0 0 7px rgba(255, 255, 255, 0.8),
+    0 0 12px rgba(255, 255, 255, 0.22);
 }
 
-.robot-face-wrapper.mini .mouth-inner { display: none; }
-.robot-face-wrapper.mini .wheat-hat { display: none; }
-
-/* ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Responsive ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
-@media (max-width: 640px) {
-    .robot-face { gap: clamp(10px, 2.5vw, 20px); padding: clamp(20px, 3vw, 40px) clamp(28px, 5vw, 60px); }
+.robot-face-wrapper.mini .mouth-inner {
+  display: none;
 }
 
 @media (max-height: 520px) {
-    .robot-face { gap: clamp(10px, 2vw, 20px); padding: clamp(16px, 2.5vw, 32px) clamp(24px, 4vw, 48px); }
-    .eye { width: clamp(38px, 5.5vw, 64px); height: clamp(38px, 5.5vw, 64px); }
-    .mouth { width: clamp(22px, 2.5vw, 36px); height: clamp(8px, 1vw, 14px); }
-    .tap-hint { margin-top: 22px; font-size: 11px; }
+  .robot-face {
+    gap: clamp(18px, 3.4vw, 38px);
+    padding: clamp(18px, 3vw, 34px) clamp(18px, 4vw, 34px);
+  }
+
+  .eye {
+    height: clamp(44px, 6vw, 62px);
+    width: clamp(74px, 10vw, 108px);
+  }
+
+  .mouth {
+    width: clamp(48px, 6vw, 74px);
+  }
+
+  .tap-hint {
+    margin-top: 24px;
+    font-size: 11px;
+  }
 }
