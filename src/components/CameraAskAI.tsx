@@ -18,7 +18,6 @@ export default function CameraAskAI() {
   const handleAsk = () => {
     if (!question.trim()) return
     setLoading(true)
-    // Simulate AI response
     setTimeout(() => {
       setResponse(
         `Great question! "${question}" — This is a simulated response from Triage AI. In production, this would use your camera feed and OpenAI to describe what you're looking at and answer your question in detail.`
@@ -36,7 +35,7 @@ export default function CameraAskAI() {
   return (
     <div className="flex flex-col min-h-screen bg-background">
       {/* Header */}
-      <header className="flex items-center gap-3 px-5 py-4 border-b border-border">
+      <header className="flex items-center gap-3 px-5 py-4 border-b border-border bg-card">
         <div className="w-12 h-8 flex items-center">
           <RobotFace mini />
         </div>
@@ -45,19 +44,18 @@ export default function CameraAskAI() {
           <p className="text-xs text-muted-foreground">Your AI Tour Guide</p>
         </div>
         <div className="ml-auto">
-          <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+          <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
         </div>
       </header>
 
       {/* Camera Viewfinder */}
       <div className="flex-1 flex flex-col items-center justify-center px-5 py-6 gap-5">
-        <div className="relative w-full max-w-md aspect-[4/3] rounded-2xl overflow-hidden border-2 border-border bg-muted">
-          {/* Mock viewfinder */}
+        <div className="relative w-full max-w-md aspect-[4/3] rounded-2xl overflow-hidden border-2 border-border bg-card shadow-sm">
           <div className="absolute inset-0 flex items-center justify-center">
             {captured ? (
               <div className="text-center space-y-2">
-                <div className="w-16 h-16 mx-auto rounded-xl bg-primary/20 flex items-center justify-center">
-                  <Camera className="w-8 h-8 text-secondary" />
+                <div className="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+                  <Camera className="w-8 h-8 text-primary" />
                 </div>
                 <p className="text-sm text-muted-foreground">Photo captured</p>
               </div>
@@ -72,34 +70,27 @@ export default function CameraAskAI() {
           </div>
 
           {/* Viewfinder corners */}
-          <div className="absolute top-3 left-3 w-6 h-6 border-t-2 border-l-2 border-secondary rounded-tl-md" />
-          <div className="absolute top-3 right-3 w-6 h-6 border-t-2 border-r-2 border-secondary rounded-tr-md" />
-          <div className="absolute bottom-3 left-3 w-6 h-6 border-b-2 border-l-2 border-secondary rounded-bl-md" />
-          <div className="absolute bottom-3 right-3 w-6 h-6 border-b-2 border-r-2 border-secondary rounded-br-md" />
+          <div className="absolute top-3 left-3 w-6 h-6 border-t-2 border-l-2 border-primary/60 rounded-tl-md" />
+          <div className="absolute top-3 right-3 w-6 h-6 border-t-2 border-r-2 border-primary/60 rounded-tr-md" />
+          <div className="absolute bottom-3 left-3 w-6 h-6 border-b-2 border-l-2 border-primary/60 rounded-bl-md" />
+          <div className="absolute bottom-3 right-3 w-6 h-6 border-b-2 border-r-2 border-primary/60 rounded-br-md" />
         </div>
 
-        {/* Capture / Reset button */}
         {!captured ? (
           <Button
             onClick={handleCapture}
             size="lg"
-            className="rounded-full w-16 h-16 p-0 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25"
+            className="rounded-full w-16 h-16 p-0 shadow-lg shadow-primary/20"
           >
             <Camera className="w-7 h-7" />
           </Button>
         ) : (
-          <Button
-            onClick={handleReset}
-            variant="outline"
-            size="sm"
-            className="gap-2"
-          >
+          <Button onClick={handleReset} variant="outline" size="sm" className="gap-2">
             <RotateCcw className="w-4 h-4" />
             Retake
           </Button>
         )}
 
-        {/* Ask AI section */}
         {captured && (
           <div className="w-full max-w-md space-y-4 animate-fade-in">
             <div className="flex gap-2">
@@ -108,23 +99,18 @@ export default function CameraAskAI() {
                 value={question}
                 onChange={e => setQuestion(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAsk()}
-                className="bg-card border-border text-foreground placeholder:text-muted-foreground"
               />
               <Button
                 onClick={handleAsk}
                 disabled={!question.trim() || loading}
-                className="bg-primary hover:bg-primary/90 px-4"
+                className="px-4"
               >
-                {loading ? (
-                  <Sparkles className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
+                {loading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </div>
 
             {response && (
-              <div className="rounded-xl bg-accent/10 border border-accent/20 p-4 animate-fade-in">
+              <div className="rounded-xl bg-accent border border-border p-4 animate-fade-in">
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-6 flex-shrink-0 mt-0.5">
                     <RobotFace mini />

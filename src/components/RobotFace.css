@@ -14,97 +14,66 @@
     will-change: transform, opacity;
 }
 
-/* Frosted backdrop — ice blue tint */
+/* Soft radial glow behind the face */
 .robot-face-wrapper:not(.mini)::after {
     content: '';
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: clamp(340px, 46vw, 660px);
-    height: clamp(260px, 36vh, 480px);
-    background: radial-gradient(ellipse at center,
-            rgba(224, 249, 255, 0.35) 0%,
-            rgba(56, 189, 248, 0.2) 25%,
-            rgba(2, 132, 199, 0.1) 50%,
-            rgba(2, 132, 199, 0.03) 70%,
-            transparent 100%);
+    width: clamp(320px, 50vw, 700px);
+    height: clamp(320px, 50vw, 700px);
+    background: radial-gradient(circle at center,
+            rgba(56, 189, 248, 0.12) 0%,
+            rgba(2, 132, 199, 0.06) 40%,
+            transparent 70%);
     border-radius: 50%;
     z-index: -1;
     pointer-events: none;
 }
 
 .robot-face-wrapper:not(.mini):hover .robot-face {
-    transform: scale(1.02);
+    transform: scale(1.03);
 }
 
 .robot-face-wrapper:not(.mini):active .robot-face {
-    transform: translateY(-4px) scale(0.98);
+    transform: translateY(-3px) scale(0.97);
 }
 
-/* Tap hint text */
+/* Tap hint */
 .tap-hint {
-    margin-top: 48px;
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    color: rgba(56, 189, 248, 0.45);
+    margin-top: 52px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(2, 132, 199, 0.4);
     animation: hintPulse 2.5s ease-in-out infinite;
 }
 
 @keyframes hintPulse {
-    0%,
-    100% {
-        opacity: 0.4;
-        transform: translateY(0);
-    }
-    50% {
-        opacity: 0.7;
-        transform: translateY(-2px);
-    }
+    0%, 100% { opacity: 0.35; transform: translateY(0); }
+    50% { opacity: 0.65; transform: translateY(-3px); }
 }
 
-/* ─────── Unlocking Animation ─────── */
+/* ─────── Unlocking ─────── */
 .robot-face-wrapper.unlocking {
     animation: wrapperUnlock 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
     pointer-events: none;
 }
 
-.robot-face-wrapper.unlocking .robot-face {
-    animation: none !important;
-}
-
-.robot-face-wrapper.unlocking .tap-hint {
-    opacity: 0;
-    transition: opacity 150ms;
-}
-
-.robot-face-wrapper.unlocking .particles {
-    opacity: 0;
-    transition: opacity 300ms;
-}
-
-.robot-face-wrapper.unlocking::after {
-    opacity: 0;
-    transition: opacity 400ms ease;
-}
+.robot-face-wrapper.unlocking .robot-face { animation: none !important; }
+.robot-face-wrapper.unlocking .tap-hint { opacity: 0; transition: opacity 150ms; }
+.robot-face-wrapper.unlocking .particles { opacity: 0; transition: opacity 300ms; }
+.robot-face-wrapper.unlocking::after { opacity: 0; transition: opacity 400ms ease; }
 
 @keyframes wrapperUnlock {
-    0% {
-        transform: scale(1);
-        opacity: 1;
-    }
-    40% {
-        transform: scale(1.05);
-        opacity: 0.85;
-    }
-    100% {
-        transform: scale(1.12);
-        opacity: 0;
-    }
+    0% { transform: scale(1); opacity: 1; }
+    40% { transform: scale(1.06); opacity: 0.8; }
+    100% { transform: scale(1.15); opacity: 0; }
 }
 
-/* ─────── Floating Particles ─────── */
+/* ─────── Floating Particles — soft dots ─────── */
 .particles {
     position: absolute;
     inset: 0;
@@ -114,39 +83,44 @@
 
 .particle {
     position: absolute;
-    width: 6px;
-    height: 6px;
     border-radius: 50%;
-    background: rgba(56, 189, 248, 0.35);
-    animation: floatUp 14s ease-in-out infinite;
-    animation-delay: calc(var(--i) * -2.2s);
+    background: rgba(2, 132, 199, 0.2);
+    animation: floatUp 16s ease-in-out infinite;
+    animation-delay: calc(var(--i) * -2.5s);
 }
 
-.particle:nth-child(1) { left: 12%; bottom: -8px; width: 5px; height: 5px; }
-.particle:nth-child(2) { left: 30%; bottom: -8px; width: 7px; height: 7px; }
-.particle:nth-child(3) { left: 50%; bottom: -8px; width: 4px; height: 4px; }
-.particle:nth-child(4) { left: 68%; bottom: -8px; width: 6px; height: 6px; }
-.particle:nth-child(5) { left: 84%; bottom: -8px; width: 5px; height: 5px; }
-.particle:nth-child(6) { left: 42%; bottom: -8px; width: 8px; height: 8px; }
+.particle:nth-child(1) { left: 15%; bottom: -6px; width: 4px; height: 4px; background: rgba(56, 189, 248, 0.3); }
+.particle:nth-child(2) { left: 32%; bottom: -6px; width: 6px; height: 6px; }
+.particle:nth-child(3) { left: 52%; bottom: -6px; width: 3px; height: 3px; background: rgba(56, 189, 248, 0.25); }
+.particle:nth-child(4) { left: 70%; bottom: -6px; width: 5px; height: 5px; }
+.particle:nth-child(5) { left: 86%; bottom: -6px; width: 4px; height: 4px; background: rgba(56, 189, 248, 0.2); }
+.particle:nth-child(6) { left: 44%; bottom: -6px; width: 7px; height: 7px; background: rgba(2, 132, 199, 0.15); }
 
 @keyframes floatUp {
     0% { transform: translateY(0) scale(1); opacity: 0; }
-    10% { opacity: 0.5; }
-    50% { opacity: 0.3; }
-    100% { transform: translateY(-100vh) scale(0.3); opacity: 0; }
+    8% { opacity: 0.6; }
+    50% { opacity: 0.25; }
+    100% { transform: translateY(-100vh) scale(0.2); opacity: 0; }
 }
 
-/* ─────── Robot Face Container ─────── */
+/* ─────── Face Container ─────── */
 .robot-face {
     position: relative;
-    display: grid;
-    grid-template-columns: auto auto auto;
+    display: flex;
     align-items: center;
     justify-content: center;
-    column-gap: clamp(28px, 5vw, 80px);
+    gap: clamp(14px, 2.5vw, 32px);
     z-index: 1;
     animation: breathe 4s ease-in-out infinite;
-    transition: transform 300ms ease, filter 300ms ease;
+    transition: transform 300ms ease;
+    /* Soft face plate */
+    background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(224,249,255,0.5) 100%);
+    padding: clamp(28px, 4vw, 56px) clamp(36px, 6vw, 80px);
+    border-radius: 50%;
+    box-shadow:
+        0 8px 40px rgba(2, 132, 199, 0.08),
+        0 2px 12px rgba(0, 0, 0, 0.04),
+        inset 0 -2px 8px rgba(2, 132, 199, 0.05);
 }
 
 @keyframes breathe {
@@ -154,94 +128,97 @@
     50% { transform: translateY(-6px); }
 }
 
-/* Ambient glow — blue */
+/* Ambient glow */
 .robot-face::before {
     content: '';
     position: absolute;
-    width: clamp(280px, 38vw, 580px);
-    height: clamp(140px, 18vw, 260px);
+    width: 120%;
+    height: 120%;
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    background: radial-gradient(ellipse, rgba(2, 132, 199, 0.18) 0%, transparent 70%);
+    background: radial-gradient(ellipse, rgba(56, 189, 248, 0.08) 0%, transparent 60%);
     z-index: -1;
     pointer-events: none;
+    border-radius: 50%;
     animation: pulseGlow 4s ease-in-out infinite;
 }
 
 @keyframes pulseGlow {
     0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.06); }
+    50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.08); }
 }
 
-/* ─────── Eyes — Blue ─────── */
+/* ─────── Eyes — Circular, modern ─────── */
 .eye {
-    width: clamp(72px, 8vw, 130px);
-    height: clamp(96px, 13vw, 176px);
+    width: clamp(52px, 6.5vw, 96px);
+    height: clamp(52px, 6.5vw, 96px);
     position: relative;
-    border-radius: 16px;
-    background: linear-gradient(155deg, #0284C7 0%, #0EA5E9 40%, #0284C7 100%);
+    border-radius: 50%;
+    background: linear-gradient(145deg, #0284C7 0%, #0EA5E9 60%, #38BDF8 100%);
     box-shadow:
-        0 6px 20px rgba(2, 132, 199, 0.28),
-        0 0 30px rgba(56, 189, 248, 0.15),
-        inset 0 2px 12px rgba(255, 255, 255, 0.08),
-        inset 0 -4px 12px rgba(0, 40, 80, 0.2);
+        0 4px 20px rgba(2, 132, 199, 0.25),
+        0 0 0 4px rgba(224, 249, 255, 0.8),
+        inset 0 2px 8px rgba(255, 255, 255, 0.15),
+        inset 0 -3px 8px rgba(0, 60, 120, 0.15);
     overflow: hidden;
     transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 300ms ease;
 }
 
+/* Highlight arc */
 .eye::after {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 46%;
-    border-radius: 16px 16px 50% 50%;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, transparent 100%);
+    top: 6%;
+    left: 15%;
+    right: 15%;
+    height: 35%;
+    border-radius: 50%;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, transparent 100%);
     pointer-events: none;
 }
 
 .eye-iris {
     position: absolute;
-    inset: 18% 14%;
-    border-radius: 10px;
-    background: linear-gradient(160deg, rgba(255, 255, 255, 0.05) 0%, rgba(0, 30, 60, 0.1) 100%);
+    inset: 20%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 40%, rgba(255,255,255,0.08) 0%, rgba(0, 40, 80, 0.12) 100%);
 }
 
 .eye-glint {
     position: absolute;
-    width: clamp(14px, 2vw, 28px);
-    height: clamp(14px, 2vw, 28px);
-    top: clamp(6px, 1vw, 14px);
-    right: clamp(6px, 1vw, 14px);
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1), 0 0 8px rgba(255, 255, 255, 0.3);
+    width: clamp(10px, 1.6vw, 20px);
+    height: clamp(10px, 1.6vw, 20px);
+    top: clamp(8px, 1.2vw, 16px);
+    right: clamp(8px, 1.2vw, 16px);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
     animation: glintPulse 3s ease-in-out infinite;
 }
 
 .eye-glint-sm {
     position: absolute;
-    width: clamp(7px, 0.9vw, 13px);
-    height: clamp(7px, 0.9vw, 13px);
-    bottom: clamp(10px, 1.5vw, 22px);
-    left: clamp(8px, 1.2vw, 18px);
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.55);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.2);
+    width: clamp(5px, 0.7vw, 9px);
+    height: clamp(5px, 0.7vw, 9px);
+    bottom: clamp(12px, 1.8vw, 22px);
+    left: clamp(10px, 1.4vw, 18px);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.45);
 }
 
 @keyframes glintPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.65; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.85); }
 }
 
-/* ─────── Eye Lid — Blue ─────── */
+/* ─────── Eye Lid ─────── */
 .eye-lid {
     position: absolute;
     top: -2px; left: -2px; right: -2px;
     height: 0%;
     background: linear-gradient(180deg, #0369A1, #0284C7);
-    border-radius: 16px 16px 0 0;
+    border-radius: 50% 50% 0 0;
     z-index: 2;
     transition: height 120ms ease-in;
     animation: blink 5s ease-in-out infinite;
@@ -252,24 +229,22 @@
     95%, 97% { height: 100%; }
 }
 
-/* ─────── Mouth — Light Blue ─────── */
+/* ─────── Mouth — Pill shape ─────── */
 .mouth-wrap {
     display: flex;
     justify-content: center;
-    align-items: flex-start;
-    padding-top: 20px;
+    align-items: center;
 }
 
 .mouth {
-    width: clamp(140px, 15vw, 260px);
-    height: clamp(36px, 4vw, 68px);
-    border-radius: 8px 8px 80px 80px;
-    background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 50%, #38BDF8 100%);
+    width: clamp(30px, 3.5vw, 56px);
+    height: clamp(12px, 1.5vw, 22px);
+    border-radius: 100px;
+    background: linear-gradient(90deg, #0284C7 0%, #38BDF8 50%, #0284C7 100%);
     box-shadow:
-        0 6px 16px rgba(2, 132, 199, 0.22),
-        0 0 20px rgba(56, 189, 248, 0.16),
-        inset 0 -3px 10px rgba(0, 80, 140, 0.18),
-        inset 0 2px 8px rgba(255, 255, 255, 0.12);
+        0 3px 12px rgba(2, 132, 199, 0.18),
+        inset 0 -2px 4px rgba(0, 60, 120, 0.12),
+        inset 0 1px 4px rgba(255, 255, 255, 0.1);
     position: relative;
     overflow: hidden;
     transition: height 400ms cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -279,191 +254,80 @@
 
 .mouth-inner {
     position: absolute;
-    top: 0; left: 10%; right: 10%;
+    top: 0; left: 15%; right: 15%;
     height: 50%;
     border-radius: 0 0 40px 40px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, transparent 100%);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, transparent 100%);
 }
 
 /* ═══════════════════════════════════════════════
-   Farmer Wheat Hat — kept unchanged
+   Wheat Hat — redesigned as a small cap/antenna
    ═══════════════════════════════════════════════ */
 .wheat-hat {
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
-    margin-bottom: -22px;
+    margin-bottom: -8px;
     z-index: 3;
     pointer-events: none;
-    filter: drop-shadow(0 4px 12px rgba(120, 90, 30, 0.22));
 }
 
+/* Small antenna dot */
 .hat-crown {
     position: relative;
-    width: clamp(120px, 14vw, 220px);
-    height: clamp(50px, 6vw, 92px);
-    background: linear-gradient(180deg, #E8D48B 0%, #DCC574 30%, #D4B85C 60%, #C9A84A 100%);
-    border-radius: 50% 50% 8px 8px / 70% 70% 8px 8px;
+    width: clamp(10px, 1.2vw, 16px);
+    height: clamp(10px, 1.2vw, 16px);
+    background: linear-gradient(145deg, #38BDF8, #0284C7);
+    border-radius: 50%;
     z-index: 1;
-    overflow: hidden;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+    animation: antennaPulse 2s ease-in-out infinite;
 }
 
-.hat-crown::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-        repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.03) 0px, rgba(0, 0, 0, 0.03) 1px, transparent 1px, transparent 5px),
-        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0px, rgba(255, 255, 255, 0.04) 1px, transparent 1px, transparent 8px);
-    border-radius: inherit;
+@keyframes antennaPulse {
+    0%, 100% { box-shadow: 0 0 12px rgba(56, 189, 248, 0.4); }
+    50% { box-shadow: 0 0 20px rgba(56, 189, 248, 0.7), 0 0 40px rgba(56, 189, 248, 0.2); }
 }
 
-.hat-crown::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 10%; right: 10%;
-    height: 45%;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, transparent 100%);
-    border-radius: 50% 50% 40% 40%;
-}
+.hat-band { display: none; }
+.hat-crease { display: none; }
 
-.hat-band {
-    position: absolute;
-    bottom: 6px; left: 4%; right: 4%;
-    height: clamp(10px, 1.4vw, 18px);
-    background: linear-gradient(180deg, #8B6B2F 0%, #7A5C28 50%, #6B4E22 100%);
-    border-radius: 3px;
-    z-index: 2;
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.15),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.15),
-        0 1px 3px rgba(0, 0, 0, 0.12);
-}
-
-.hat-band::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: repeating-linear-gradient(90deg, transparent 0px, transparent 6px, rgba(255, 220, 130, 0.12) 6px, rgba(255, 220, 130, 0.12) 7px);
-    border-radius: inherit;
-}
-
-.hat-crease {
-    position: absolute;
-    top: 20%; left: 50%;
-    transform: translateX(-50%);
-    width: 60%; height: 1px;
-    background: rgba(0, 0, 0, 0.06);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.1);
-}
-
+/* Antenna stem */
 .hat-brim {
-    position: relative;
-    width: clamp(180px, 22vw, 360px);
-    height: clamp(16px, 2vw, 30px);
-    background: linear-gradient(180deg, #D4B85C 0%, #C9A84A 40%, #BF9E42 100%);
-    border-radius: 50% 50% 50% 50% / 80% 80% 100% 100%;
-    margin-top: -2px;
-    z-index: 0;
-    box-shadow:
-        0 3px 8px rgba(120, 90, 30, 0.2),
-        0 1px 2px rgba(0, 0, 0, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.15);
-}
-
-.hat-brim::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.02) 0px, rgba(0, 0, 0, 0.02) 1px, transparent 1px, transparent 4px);
-    border-radius: inherit;
-}
-
-.hat-brim::after {
-    content: '';
-    position: absolute;
-    bottom: -3px; left: 10%; right: 10%;
-    height: 4px;
-    background: radial-gradient(ellipse, rgba(120, 90, 30, 0.12) 0%, transparent 70%);
-    border-radius: 50%;
-}
-
-/* ─── Wheat Sprig ─── */
-.hat-wheat-sprig {
-    position: absolute;
-    top: 40%; right: 10%;
-    transform-origin: bottom center;
-    transform: rotate(-25deg);
-    animation: sprigSway 3.5s ease-in-out infinite;
-    z-index: 3;
-}
-
-.sprig-stem {
     width: 2px;
-    height: clamp(22px, 3vw, 40px);
-    background: linear-gradient(to top, #8B9A46, #C5B358);
+    height: clamp(16px, 2vw, 28px);
+    background: linear-gradient(180deg, #38BDF8, rgba(2, 132, 199, 0.3));
     border-radius: 1px;
-    margin: 0 auto;
-    position: relative;
+    margin-top: 0;
 }
 
-.sprig-stem::after {
-    content: '';
-    position: absolute;
-    top: 50%; left: -3px;
-    width: 7px; height: 2px;
-    background: linear-gradient(90deg, #8B9A46, transparent);
-    border-radius: 50%;
-    transform: rotate(-20deg);
-}
+.hat-brim::before { display: none; }
+.hat-brim::after { display: none; }
 
-.sprig-head {
-    position: absolute;
-    top: -16px; left: 50%;
-    transform: translateX(-50%);
-    width: 14px; height: 22px;
-}
+/* Hide sprig */
+.hat-wheat-sprig { display: none; }
 
-.sprig-grain {
-    position: absolute;
-    width: 5px; height: 8px;
-    background: linear-gradient(160deg, #E2B94D, #C5933A);
-    border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%;
-    box-shadow: inset 0 1px 1px rgba(255, 220, 130, 0.3);
-}
-
-.sprig-grain:nth-child(1) { bottom: 0; left: 0; transform: rotate(-30deg); }
-.sprig-grain:nth-child(2) { bottom: 6px; left: -1px; transform: rotate(-20deg); }
-.sprig-grain:nth-child(3) { bottom: 0; right: 0; transform: rotate(30deg); }
-.sprig-grain:nth-child(4) { bottom: 6px; right: -1px; transform: rotate(20deg); }
-.sprig-grain:nth-child(5) { bottom: 12px; left: 50%; transform: translateX(-50%); }
-
-@keyframes sprigSway {
-    0%, 100% { transform: rotate(-25deg); }
-    50% { transform: rotate(-20deg); }
-}
-
-/* ─── Unlocking — hat fades out ─── */
+/* ─── Unlocking ─── */
 .robot-face-wrapper.unlocking .wheat-hat {
     animation: faceUnlock 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
 }
 
 @keyframes faceUnlock {
     0% { transform: scale(1); opacity: 1; }
-    100% { transform: scale(1.1) translateY(-20px); opacity: 0; }
+    100% { transform: scale(1.2) translateY(-30px); opacity: 0; }
 }
 
-/* ─── Hat Expression Variants ─── */
+/* ─── Antenna Expression Variants ─── */
 .robot-face.happy~.wheat-hat,
 .robot-face-wrapper:has(.robot-face.happy) .wheat-hat {
     animation: hatBounce 2s ease-in-out infinite;
 }
 
 @keyframes hatBounce {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    25% { transform: translateY(-8px) rotate(1deg); }
-    75% { transform: translateY(-4px) rotate(-1deg); }
+    0%, 100% { transform: translateY(0); }
+    25% { transform: translateY(-6px); }
+    75% { transform: translateY(-3px); }
 }
 
 .robot-face.scared~.wheat-hat,
@@ -483,48 +347,48 @@
 }
 
 @keyframes hatWobble {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    25% { transform: translateY(-3px) rotate(3deg); }
-    75% { transform: translateY(-3px) rotate(-3deg); }
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(8deg); }
+    75% { transform: rotate(-8deg); }
 }
 
 .robot-face.sleepy~.wheat-hat,
 .robot-face-wrapper:has(.robot-face.sleepy) .wheat-hat {
-    transform: translateY(4px) rotate(-3deg);
     animation: hatDroop 4s ease-in-out infinite;
+    opacity: 0.5;
 }
 
 @keyframes hatDroop {
-    0%, 100% { transform: translateY(4px) rotate(-3deg); }
-    50% { transform: translateY(0px) rotate(-2deg); }
+    0%, 100% { transform: translateY(2px); opacity: 0.4; }
+    50% { transform: translateY(0); opacity: 0.6; }
 }
 
-/* ─────── Expressions — Blue ─────── */
+/* ─────── Expressions ─────── */
 .robot-face.happy .mouth {
-    height: clamp(48px, 5.5vw, 88px);
+    width: clamp(40px, 4.5vw, 72px);
+    height: clamp(20px, 2.5vw, 38px);
     border-radius: 8px 8px 100px 100px;
     box-shadow:
-        0 8px 22px rgba(2, 132, 199, 0.3),
-        0 0 30px rgba(56, 189, 248, 0.25),
-        inset 0 -3px 10px rgba(0, 80, 140, 0.18),
-        inset 0 2px 8px rgba(255, 255, 255, 0.12);
+        0 5px 18px rgba(2, 132, 199, 0.25),
+        inset 0 -2px 6px rgba(0, 60, 120, 0.15),
+        inset 0 1px 4px rgba(255, 255, 255, 0.1);
 }
 
 .robot-face.happy .eye {
-    transform: scaleY(0.82);
+    transform: scaleY(0.8);
     box-shadow:
-        0 6px 20px rgba(2, 132, 199, 0.35),
-        0 0 36px rgba(56, 189, 248, 0.22),
-        inset 0 2px 12px rgba(255, 255, 255, 0.08),
-        inset 0 -4px 12px rgba(0, 40, 80, 0.2);
+        0 4px 24px rgba(2, 132, 199, 0.3),
+        0 0 0 4px rgba(224, 249, 255, 0.9),
+        inset 0 2px 8px rgba(255, 255, 255, 0.15),
+        inset 0 -3px 8px rgba(0, 60, 120, 0.15);
 }
 
-.robot-face.curious .eye.left-eye { transform: scaleX(1.05) translateX(4px); }
-.robot-face.curious .eye.right-eye { transform: scaleX(1.05) translateX(-4px); }
+.robot-face.curious .eye.left-eye { transform: scale(1.08) translateX(3px); }
+.robot-face.curious .eye.right-eye { transform: scale(1.08) translateX(-3px); }
 
 .robot-face.curious .mouth {
-    width: clamp(60px, 6vw, 100px);
-    height: clamp(44px, 5vw, 80px);
+    width: clamp(18px, 2vw, 32px);
+    height: clamp(18px, 2vw, 32px);
     border-radius: 50%;
 }
 
@@ -532,14 +396,14 @@
     animation: breathe 4s ease-in-out infinite, wobble 0.6s ease-in-out 3;
 }
 
-.robot-face.confused .eye.left-eye { transform: translateY(-8px) scaleY(1.08); }
-.robot-face.confused .eye.right-eye { transform: translateY(4px) scaleY(0.9); }
+.robot-face.confused .eye.left-eye { transform: translateY(-5px) scale(1.05); }
+.robot-face.confused .eye.right-eye { transform: translateY(3px) scale(0.92); }
 
 .robot-face.confused .mouth {
-    width: clamp(100px, 10vw, 180px);
-    height: clamp(20px, 2.2vw, 38px);
-    border-radius: 6px;
-    transform: rotate(-6deg) skewX(-8deg);
+    width: clamp(32px, 3.5vw, 56px);
+    height: clamp(10px, 1.2vw, 18px);
+    border-radius: 4px;
+    transform: rotate(-5deg);
 }
 
 @keyframes wobble {
@@ -552,18 +416,24 @@
     animation: breathe 4s ease-in-out infinite, shiver 0.15s ease-in-out 8;
 }
 
-.robot-face.scared .eye { transform: scale(0.8); }
+.robot-face.scared .eye {
+    transform: scale(0.82);
+    box-shadow:
+        0 4px 24px rgba(2, 132, 199, 0.35),
+        0 0 0 5px rgba(224, 249, 255, 0.9),
+        inset 0 2px 8px rgba(255, 255, 255, 0.15);
+}
 
 .robot-face.scared .eye-glint {
-    width: clamp(18px, 2.4vw, 34px) !important;
-    height: clamp(18px, 2.4vw, 34px) !important;
+    width: clamp(14px, 2vw, 26px) !important;
+    height: clamp(14px, 2vw, 26px) !important;
     animation: none;
     opacity: 1;
 }
 
 .robot-face.scared .mouth {
-    width: clamp(50px, 5vw, 86px);
-    height: clamp(18px, 2vw, 32px);
+    width: clamp(16px, 1.8vw, 28px);
+    height: clamp(16px, 1.8vw, 28px);
     border-radius: 50%;
 }
 
@@ -579,13 +449,13 @@
     transition: height 600ms ease;
 }
 
-.robot-face.sleepy .eye { transform: scaleY(0.92); }
+.robot-face.sleepy .eye { transform: scaleY(0.9); }
 
 .robot-face.sleepy .mouth {
-    width: clamp(80px, 8vw, 140px);
-    height: clamp(16px, 1.8vw, 28px);
+    width: clamp(24px, 2.5vw, 40px);
+    height: clamp(8px, 1vw, 14px);
     border-radius: 100px;
-    opacity: 0.75;
+    opacity: 0.65;
 }
 
 /* ─────── Mini Mode ─────── */
@@ -596,34 +466,38 @@
 }
 
 .robot-face-wrapper.mini .robot-face {
-    column-gap: 8px;
+    gap: 5px;
     animation: none;
+    padding: 6px 10px;
+    background: transparent;
+    box-shadow: none;
 }
 
 .robot-face-wrapper.mini .robot-face::before { display: none; }
 
 .robot-face-wrapper.mini .eye {
-    width: 18px; height: 24px;
-    border-radius: 5px;
+    width: 16px; height: 16px;
+    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.2);
 }
+
+.robot-face-wrapper.mini .eye::after { display: none; }
 
 .robot-face-wrapper.mini .eye-iris,
 .robot-face-wrapper.mini .eye-glint-sm { display: none; }
 
 .robot-face-wrapper.mini .eye-glint {
-    width: 5px !important; height: 5px !important;
+    width: 4px !important; height: 4px !important;
     top: 3px !important; right: 3px !important;
-    border-radius: 2px;
+    border-radius: 50%;
     animation: none;
 }
 
 .robot-face-wrapper.mini .eye-lid { display: none; }
-.robot-face-wrapper.mini .eye::after { display: none; }
 .robot-face-wrapper.mini .mouth-wrap { padding-top: 0; }
 
 .robot-face-wrapper.mini .mouth {
-    width: 28px; height: 8px;
-    border-radius: 2px 2px 14px 14px;
+    width: 14px; height: 5px;
+    border-radius: 100px;
     box-shadow: none;
 }
 
@@ -632,14 +506,12 @@
 
 /* ─────── Responsive ─────── */
 @media (max-width: 640px) {
-    .robot-face { column-gap: clamp(16px, 3.5vw, 28px); }
+    .robot-face { gap: clamp(10px, 2.5vw, 20px); padding: clamp(20px, 3vw, 40px) clamp(28px, 5vw, 60px); }
 }
 
 @media (max-height: 520px) {
-    .robot-face { column-gap: clamp(18px, 3vw, 40px); }
-    .eye { width: clamp(54px, 7vw, 80px); height: clamp(72px, 10vw, 108px); }
-    .mouth { width: clamp(100px, 12vw, 170px); height: clamp(24px, 3.2vw, 44px); }
-    .hat-crown { width: clamp(86px, 11vw, 144px); height: clamp(34px, 4.5vw, 60px); }
-    .hat-brim { width: clamp(126px, 16vw, 216px); height: clamp(11px, 1.5vw, 20px); }
-    .tap-hint { margin-top: 22px; font-size: 12px; }
+    .robot-face { gap: clamp(10px, 2vw, 20px); padding: clamp(16px, 2.5vw, 32px) clamp(24px, 4vw, 48px); }
+    .eye { width: clamp(38px, 5.5vw, 64px); height: clamp(38px, 5.5vw, 64px); }
+    .mouth { width: clamp(22px, 2.5vw, 36px); height: clamp(8px, 1vw, 14px); }
+    .tap-hint { margin-top: 22px; font-size: 11px; }
 }
