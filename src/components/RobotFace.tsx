@@ -18,12 +18,18 @@ const EXPRESSIONS: Expression[] = [
   "sad",
 ];
 
+const MAX_EYE_OFFSET = 10; // px max the pupil-shift moves
+
 export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
   const [expression, setExpression] = useState<Expression>("happy");
   const [blinking, setBlinking] = useState(false);
   const [squishing, setSquishing] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const eyeLRef = useRef<HTMLDivElement>(null);
+  const eyeRRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number>(0);
   const blinkRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exprRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -40,16 +46,13 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
         if (Math.random() < 0.25) {
           setTimeout(() => {
             setBlinking(true);
-            setTimeout(() => {
-              setBlinking(false);
-              scheduleBlink();
-            }, 230);
-          }, 400);
+            setTimeout(() => { setBlinking(false); scheduleBlink(); }, 220);
+          }, 380);
         } else {
           scheduleBlink();
         }
-      }, 230);
-    }, 2200 + Math.random() * 3800);
+      }, 220);
+    }, 2400 + Math.random() * 3600);
   }, []);
 
   const scheduleExpression = useCallback((current: Expression) => {
@@ -58,6 +61,49 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
       setExpression(next);
       scheduleExpression(next);
     }, 5500 + Math.random() * 5500);
+  }, []);
+
+  /* ── Eye tracking ── */
+  useEffect(() => {
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        const wrapper = wrapperRef.current;
+        if (!wrapper) return;
+
+        const rect = wrapper.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+
+        let clientX: number, clientY: number;
+        if ("touches" in e) {
+          clientX = e.touches[0].clientX;
+          clientY = e.touches[0].clientY;
+        } else {
+          clientX = e.clientX;
+          clientY = e.clientY;
+        }
+
+        const dx = clientX - cx;
+        const dy = clientY - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const clamp = Math.min(dist / 300, 1) * MAX_EYE_OFFSET;
+        const ox = (dx / dist) * clamp;
+        const oy = (dy / dist) * clamp;
+
+        const t = `translate(${ox.toFixed(1)}px, ${oy.toFixed(1)}px)`;
+        if (eyeLRef.current) eyeLRef.current.style.transform = t;
+        if (eyeRRef.current) eyeRRef.current.style.transform = t;
+      });
+    };
+
+    window.addEventListener("mousemove", onMove, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("touchmove", onMove);
+      cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -83,7 +129,6 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
     scheduleExpression(next);
   };
 
-  /* ── Mini mode: tiny glowing dots for page headers ── */
   if (mini) {
     return (
       <div className="robot-face-mini" onClick={handleClick}>
@@ -95,16 +140,21 @@ export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
   }
 
   return (
-    <div className="robot-face-wrapper">
+    <div className="robot-face-wrapper" ref={wrapperRef}>
       <div
         className={`robot-face expr-${expression}${leaving ? " leaving" : ""}`}
         style={squishing && !leaving ? { animation: "squish 0.38s cubic-bezier(0.34,1.56,0.64,1) forwards" } : undefined}
         onClick={handleClick}
       >
         <div className="robot-features">
-          <div className={`led robot-eye${blinking ? " blinking" : ""}`} />
+          {/* Each eye has an outer shell (shape+glow) and inner pupil-tracker */}
+          <div className={`led robot-eye${blinking ? " blinking" : ""}`}>
+            <div className="eye-pupil" ref={eyeLRef} />
+          </div>
           <div className="led robot-mouth" />
-          <div className={`led robot-eye${blinking ? " blinking" : ""}`} />
+          <div className={`led robot-eye${blinking ? " blinking" : ""}`}>
+            <div className="eye-pupil" ref={eyeRRef} />
+          </div>
         </div>
       </div>
     </div>
