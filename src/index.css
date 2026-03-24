@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --background: 200 60% 98%;
+    --background: 204 20% 97%;
     --foreground: 210 22% 17%;
 
     --card: 0 0% 100%;
@@ -13,35 +13,35 @@
     --popover: 0 0% 100%;
     --popover-foreground: 210 22% 17%;
 
-    --primary: 204 96% 40%;
+    --primary: 197 85% 49%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 199 92% 60%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 204 20% 94%;
+    --secondary-foreground: 210 22% 22%;
 
-    --muted: 200 30% 94%;
-    --muted-foreground: 210 14% 45%;
+    --muted: 204 15% 93%;
+    --muted-foreground: 210 12% 48%;
 
-    --accent: 195 100% 94%;
+    --accent: 204 20% 94%;
     --accent-foreground: 210 22% 17%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 200 20% 88%;
-    --input: 200 20% 88%;
-    --ring: 204 96% 40%;
+    --border: 204 20% 88%;
+    --input: 204 20% 88%;
+    --ring: 197 85% 49%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 200 40% 97%;
+    --sidebar-background: 204 20% 97%;
     --sidebar-foreground: 210 22% 17%;
-    --sidebar-primary: 204 96% 40%;
+    --sidebar-primary: 197 85% 49%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 200 30% 94%;
+    --sidebar-accent: 204 20% 94%;
     --sidebar-accent-foreground: 210 22% 17%;
-    --sidebar-border: 200 20% 88%;
-    --sidebar-ring: 204 96% 40%;
+    --sidebar-border: 204 20% 88%;
+    --sidebar-ring: 197 85% 49%;
   }
 
   .dark {
@@ -81,6 +81,10 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply min-h-screen bg-background text-foreground antialiased;
+  }
+
+  #root {
+    min-height: 100vh;
   }
 }
