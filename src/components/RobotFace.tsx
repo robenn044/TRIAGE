@@ -1,130 +1,110 @@
-import { useState, useEffect, useRef, CSSProperties } from 'react'
-import './RobotFace.css'
-
-const EXPRESSIONS = [
-  { name: 'idle', weight: 55 },
-  { name: 'happy', weight: 14 },
-  { name: 'curious', weight: 10 },
-  { name: 'confused', weight: 10 },
-  { name: 'scared', weight: 6 },
-  { name: 'sleepy', weight: 5 },
-]
-
-function pickExpression(current: string) {
-  const pool = EXPRESSIONS.filter(e => e.name !== current)
-  const total = pool.reduce((s, e) => s + e.weight, 0)
-  let r = Math.random() * total
-  for (const e of pool) {
-    r -= e.weight
-    if (r <= 0) return e.name
-  }
-  return 'idle'
-}
+import { useEffect, useRef, useState, useCallback } from "react";
+import "./RobotFace.css";
 
 interface RobotFaceProps {
-  onUnlock?: () => void
-  mini?: boolean
-  visible?: boolean
+  onUnlock?: () => void;
+  mini?: boolean;
 }
 
-export default function RobotFace({ onUnlock, mini = false, visible = true }: RobotFaceProps) {
-  const [expression, setExpression] = useState('idle')
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [unlocking, setUnlocking] = useState(false)
+type Expression = "happy" | "surprised" | "sad" | "sleepy" | "excited" | "smirk" | "neutral";
+
+const EXPRESSIONS: Expression[] = [
+  "happy", "happy", "happy",
+  "excited", "excited",
+  "surprised",
+  "smirk",
+  "neutral",
+  "sleepy",
+  "sad",
+];
+
+export default function RobotFace({ onUnlock, mini }: RobotFaceProps) {
+  const [expression, setExpression] = useState<Expression>("happy");
+  const [blinking, setBlinking] = useState(false);
+  const [squishing, setSquishing] = useState(false);
+
+  const blinkRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exprRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const pickNext = (current: Expression): Expression => {
+    const pool = EXPRESSIONS.filter((e) => e !== current);
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+
+  const scheduleBlink = useCallback(() => {
+    blinkRef.current = setTimeout(() => {
+      setBlinking(true);
+      setTimeout(() => {
+        setBlinking(false);
+        if (Math.random() < 0.25) {
+          setTimeout(() => {
+            setBlinking(true);
+            setTimeout(() => {
+              setBlinking(false);
+              scheduleBlink();
+            }, 230);
+          }, 400);
+        } else {
+          scheduleBlink();
+        }
+      }, 230);
+    }, 2200 + Math.random() * 3800);
+  }, []);
+
+  const scheduleExpression = useCallback((current: Expression) => {
+    exprRef.current = setTimeout(() => {
+      const next = pickNext(current);
+      setExpression(next);
+      scheduleExpression(next);
+    }, 4500 + Math.random() * 5000);
+  }, []);
 
   useEffect(() => {
-    if (visible && unlocking) {
-      setUnlocking(false)
-      setExpression('idle')
-    }
-  }, [visible, unlocking])
-
-  useEffect(() => {
-    if (mini || unlocking) return
-    const isIdle = expression === 'idle'
-    const delay = isIdle
-      ? 4000 + Math.random() * 4000
-      : 2000 + Math.random() * 2000
-
-    timerRef.current = setTimeout(() => {
-      setExpression(pickExpression(expression))
-    }, delay)
-
+    scheduleBlink();
+    scheduleExpression("happy");
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-    }
-  }, [expression, mini, unlocking])
+      if (blinkRef.current) clearTimeout(blinkRef.current);
+      if (exprRef.current)  clearTimeout(exprRef.current);
+    };
+  }, []);
 
   const handleClick = () => {
-    if (!onUnlock || mini || unlocking) return
-    setUnlocking(true)
-    setExpression('happy')
-    setTimeout(() => onUnlock(), 280)
+    if (onUnlock) {
+      onUnlock();
+      return;
+    }
+    setSquishing(true);
+    setTimeout(() => setSquishing(false), 400);
+    const next = pickNext(expression);
+    setExpression(next);
+    if (exprRef.current) clearTimeout(exprRef.current);
+    scheduleExpression(next);
+  };
+
+  /* ── Mini mode: tiny glowing dots for page headers ── */
+  if (mini) {
+    return (
+      <div className="robot-face-mini" onClick={handleClick}>
+        <span className="mini-dot" />
+        <span className="mini-dot mini-mouth" />
+        <span className="mini-dot" />
+      </div>
+    );
   }
 
   return (
-    <div
-      className={`robot-face-wrapper ${mini ? 'mini' : ''} ${unlocking ? 'unlocking' : ''}`}
-      onClick={handleClick}
-      role={onUnlock && !mini ? 'button' : undefined}
-      tabIndex={onUnlock && !mini ? 0 : undefined}
-      aria-label={mini ? 'Triage robot' : 'Tap to begin your tour'}
-    >
-      {!mini && (
-        <div className="particles" aria-hidden="true">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <span key={i} className="particle" style={{ '--i': i } as CSSProperties} />
-          ))}
+    <div className="robot-face-wrapper">
+      <div
+        className={`robot-face expr-${expression}`}
+        style={squishing ? { animation: "squish 0.38s cubic-bezier(0.34,1.56,0.64,1) forwards" } : undefined}
+        onClick={handleClick}
+      >
+        <div className="robot-features">
+          <div className={`led robot-eye${blinking ? " blinking" : ""}`} />
+          <div className="led robot-mouth" />
+          <div className={`led robot-eye${blinking ? " blinking" : ""}`} />
         </div>
-      )}
-
-      {!mini && (
-        <div className="wheat-hat" aria-hidden="true">
-          <div className="hat-crown">
-            <div className="hat-band" />
-            <div className="hat-crease" />
-          </div>
-          <div className="hat-brim" />
-          <div className="hat-wheat-sprig">
-            <div className="sprig-stem" />
-            <div className="sprig-head">
-              <span className="sprig-grain" />
-              <span className="sprig-grain" />
-              <span className="sprig-grain" />
-              <span className="sprig-grain" />
-              <span className="sprig-grain" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      <section className={`robot-face ${expression}`} aria-label="Robot face">
-        <div className="eye left-eye">
-          <div className="eye-iris">
-            <span className="eye-glint" />
-            <span className="eye-glint-sm" />
-          </div>
-          <div className="eye-lid" />
-        </div>
-
-        <div className="mouth-wrap">
-          <div className="mouth">
-            <div className="mouth-inner" />
-          </div>
-        </div>
-
-        <div className="eye right-eye">
-          <div className="eye-iris">
-            <span className="eye-glint" />
-            <span className="eye-glint-sm" />
-          </div>
-          <div className="eye-lid" />
-        </div>
-      </section>
-
-      {!mini && !unlocking && !!onUnlock && (
-        <p className="tap-hint">Tap to begin</p>
-      )}
+      </div>
     </div>
-  )
+  );
 }
