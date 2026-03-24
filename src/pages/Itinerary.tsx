@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Send, MapPin, Loader2, ChevronLeft, Coffee, Sun, Moon, Utensils, Lightbulb } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import TriageMark from '@/components/TriageMark'
+import RobotFace from '@/components/RobotFace'
 
 const ALBANIAN_CITIES = [
   'Tirana', 'Durrës', 'Vlorë', 'Sarandë', 'Berat',
@@ -342,7 +342,7 @@ export default function Itinerary() {
           <button onClick={() => navigate('/dashboard')} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.12] text-white/80 ring-1 ring-white/[0.15] transition-colors hover:bg-white/[0.18] hover:text-white">
             <ArrowLeft className="h-3.5 w-3.5" />
           </button>
-          <div className="shrink-0 flex items-center justify-center"><TriageMark className="h-8 w-8" decorative /></div>
+          <div className="shrink-0 flex items-center justify-center"><RobotFace mini /></div>
           <div className="min-w-0">
             <h1 className="text-xs font-semibold leading-tight tracking-tight text-white">Itinerary Planner</h1>
             <p className="text-[10px] leading-tight text-white/70">{done && itinerary ? itinerary.title : 'One-frame survey · Albanian cities'}</p>

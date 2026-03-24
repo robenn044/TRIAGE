@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Map, MapPin, Mic, MicOff, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import TriageMark from './TriageMark'
+import RobotFace from './RobotFace'
 
 /* ── Types ─────────────────────────────────────────────── */
 type AssistantState = 'listening' | 'processing' | 'speaking' | 'error' | 'idle'
@@ -406,10 +406,10 @@ export default function CameraAskAI() {
         <header className="shrink-0 bg-[#20a7db]">
           <div className="mx-auto flex w-full items-center gap-2 px-3 py-1.5">
             <div className="shrink-0 flex items-center justify-center">
-              <TriageMark className="h-8 w-8" decorative />
+              <RobotFace mini />
             </div>
             <div className="min-w-0">
-              <h1 className="text-xs font-semibold leading-tight tracking-[0.18em] text-white">TRIAGE</h1>
+              <h1 className="text-xs font-semibold leading-tight tracking-tight text-white">Triage</h1>
               <p className="text-[10px] leading-tight text-white/70">Voice-activated tour guide</p>
             </div>
           <div className="ml-auto shrink-0 rounded-full bg-white/[0.12] px-2 py-0.5 text-[10px] font-medium text-white/80 ring-1 ring-white/[0.15]">
