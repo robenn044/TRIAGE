@@ -58,6 +58,20 @@ function getErrorMessage(error: unknown) {
 
 /* ── Helpers ───────────────────────────────────────────── */
 
+/** Capture a JPEG frame from a <video> element, return base64 (no prefix).
+ *  Applies scaleX(-1) to match the display correction for the hardware-mirrored webcam. */
+function snapFrame(video: HTMLVideoElement, quality = 0.85): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const ctx = canvas.getContext('2d')!
+  // Mirror the canvas draw to match display — Groq sees the correct orientation
+  ctx.translate(canvas.width, 0)
+  ctx.scale(-1, 1)
+  ctx.drawImage(video, 0, 0)
+  return canvas.toDataURL('image/jpeg', quality).split(',')[1]
+}
+
 /** Pick the most natural-sounding English voice available. */
 function pickVoice(): SpeechSynthesisVoice | null {
   const voices = speechSynthesis.getVoices()
@@ -88,13 +102,17 @@ export default function CameraAskAI() {
   const navigate = useNavigate()
 
   /* ── Refs ── */
+  const videoRef = useRef<HTMLVideoElement>(null)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const isSpeakingRef = useRef(false)
+  const streamRef = useRef<MediaStream | null>(null)
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
 
   /* ── State ── */
   const [entered, setEntered] = useState(false)
+  const [cameraReady, setCameraReady] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
@@ -138,6 +156,32 @@ export default function CameraAskAI() {
       events.forEach(e => window.removeEventListener(e, resetLockTimer))
     }
   }, [resetLockTimer])
+
+  /* ── Camera startup ── */
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        })
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play()
+          setCameraReady(true)
+        }
+      } catch (error: unknown) {
+        if (!cancelled) setCameraError(getErrorMessage(error) || 'Camera access denied')
+      }
+    })()
+    return () => {
+      cancelled = true
+      streamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  }, [])
 
   /* ── TTS ── */
   const speak = useCallback((text: string) => {
@@ -186,10 +230,15 @@ export default function CameraAskAI() {
     setTranscript('')
 
     try {
+      let image: string | null = null
+      if (videoRef.current && videoRef.current.readyState >= 2) {
+        image = snapFrame(videoRef.current)
+      }
+
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ image, prompt }),
       })
 
       if (!res.ok) {
@@ -379,10 +428,10 @@ export default function CameraAskAI() {
           <div className="flex shrink-0 items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#20a7db]">
-                Voice mode
+                Camera mode
               </p>
               <h2 className="mt-0.5 text-sm font-semibold leading-tight tracking-tight text-slate-900">
-                Ask me anything about Albania
+                Ask me anything about what you see
               </h2>
             </div>
             {/* Nav buttons */}
@@ -417,44 +466,50 @@ export default function CameraAskAI() {
             </div>
           </div>
 
-          {/* Camera disabled banner */}
-          <div className="relative mt-2 min-h-0 flex-1 overflow-hidden rounded-xl border border-[#20a7db]/[0.12] bg-slate-900 flex flex-col items-center justify-center gap-3">
+          {/* Live camera viewport */}
+          <div className="relative mt-2 min-h-0 flex-1 overflow-hidden rounded-xl border border-[#20a7db]/[0.12] bg-black">
             {/* Corner brackets */}
-            <div className="pointer-events-none absolute left-2 top-2 h-5 w-5 rounded-tl-lg border-l-2 border-t-2 border-white/20 z-10" />
-            <div className="pointer-events-none absolute right-2 top-2 h-5 w-5 rounded-tr-lg border-r-2 border-t-2 border-white/20 z-10" />
-            <div className="pointer-events-none absolute bottom-2 left-2 h-5 w-5 rounded-bl-lg border-b-2 border-l-2 border-white/20 z-10" />
-            <div className="pointer-events-none absolute bottom-2 right-2 h-5 w-5 rounded-br-lg border-b-2 border-r-2 border-white/20 z-10" />
+            <div className="pointer-events-none absolute left-2 top-2 h-5 w-5 rounded-tl-lg border-l-2 border-t-2 border-white/40 z-10" />
+            <div className="pointer-events-none absolute right-2 top-2 h-5 w-5 rounded-tr-lg border-r-2 border-t-2 border-white/40 z-10" />
+            <div className="pointer-events-none absolute bottom-2 left-2 h-5 w-5 rounded-bl-lg border-b-2 border-l-2 border-white/40 z-10" />
+            <div className="pointer-events-none absolute bottom-2 right-2 h-5 w-5 rounded-br-lg border-b-2 border-r-2 border-white/40 z-10" />
 
-            {/* Camera icon with slash */}
-            <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-white/10">
-              <svg className="h-8 w-8 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
-              </svg>
-              {/* Diagonal slash */}
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="h-0.5 w-12 rotate-45 rounded-full bg-red-400/70" />
-              </div>
+            {/* Status badge */}
+            <div className="absolute left-2 top-2 z-20 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur-sm">
+              {cameraReady ? 'Live' : cameraError ? 'Error' : 'Starting…'}
             </div>
 
-            {/* Banner text */}
-            <div className="text-center px-6">
-              <p className="text-sm font-semibold text-white/80">Camera disabled</p>
-              <p className="mt-1 text-xs text-yellow-400/90 font-medium">🚧 Work in progress</p>
-              <p className="mt-2 text-xs leading-4 text-white/40">Use your voice to ask me anything about Albania!</p>
-            </div>
+            {/* Video element — CSS scaleX(-1) corrects the hardware-mirrored webcam feed */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ transform: 'scaleX(-1)' }}
+            />
 
-            {/* Processing overlay */}
-            {state === 'processing' && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-                <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[#20a7db]" />
-                  <p className="mt-2 text-xs font-semibold text-slate-900">Thinking…</p>
+            {/* Camera error fallback */}
+            {cameraError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90">
+                <div className="text-center text-white">
+                  <p className="text-sm font-semibold">Camera unavailable</p>
+                  <p className="mt-1 text-xs text-white/60">{cameraError}</p>
                 </div>
               </div>
             )}
 
-            {/* Transcript overlay — bottom of panel */}
+            {/* Processing overlay */}
+            {state === 'processing' && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+                <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[#20a7db]" />
+                  <p className="mt-2 text-xs font-semibold text-slate-900">Analyzing…</p>
+                </div>
+              </div>
+            )}
+
+            {/* Transcript overlay — bottom of video */}
             {transcript && state !== 'idle' && (
               <div className="absolute bottom-3 left-3 right-3 z-20">
                 <div className="rounded-xl bg-black/60 px-3 py-2 backdrop-blur-sm">
@@ -480,7 +535,7 @@ export default function CameraAskAI() {
                     : transcript && state === 'listening'
                       ? transcript
                       : micEnabled
-                         ? 'Ask me anything about Albania\u2026'
+                        ? 'Ask me anything about what you see\u2026'
                         : 'Microphone paused'}
             </p>
           </div>
