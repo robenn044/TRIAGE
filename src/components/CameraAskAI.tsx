@@ -117,6 +117,7 @@ export default function CameraAskAI() {
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [cameraErrorDetail, setCameraErrorDetail] = useState<string | null>(null)
   const [cameraRetry, setCameraRetry] = useState(0)
+  const [diagLog, setDiagLog] = useState<string[]>([])
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
@@ -168,6 +169,10 @@ export default function CameraAskAI() {
     setCameraError(null)
     setCameraErrorDetail(null)
     setCameraReady(false)
+    setDiagLog([])
+
+    const ts = () => new Date().toISOString().slice(11, 23)
+    const log = (msg: string) => setDiagLog(prev => [...prev, `[${ts()}] ${msg}`])
 
     function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
       return Promise.race([
@@ -185,7 +190,11 @@ export default function CameraAskAI() {
 
     ;(async () => {
       // ── 1. API check ───────────────────────────────────────────────────
+      log(`protocol: ${window.location.protocol}`)
+      log(`mediaDevices: ${!!navigator.mediaDevices}`)
+      log(`getUserMedia: ${typeof navigator.mediaDevices?.getUserMedia}`)
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        log('FAIL: Camera API not available')
         if (!cancelled) {
           setCameraError('Camera API not available')
           setCameraErrorDetail(
@@ -201,8 +210,13 @@ export default function CameraAskAI() {
       let videoDeviceCount = 0
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
-        videoDeviceCount = devices.filter(d => d.kind === 'videoinput').length
-      } catch { /* not critical */ }
+        const videoDevs = devices.filter(d => d.kind === 'videoinput')
+        videoDeviceCount = videoDevs.length
+        log(`enumerateDevices: ${devices.length} total, ${videoDeviceCount} videoinput`)
+        videoDevs.forEach((d, i) => log(`  cam[${i}]: ${d.label || '(no label yet)'} id=${d.deviceId.slice(0,8)}`)) 
+      } catch (e) {
+        log(`enumerateDevices error: ${(e as Error).message}`)
+      }
       if (cancelled) return
 
       // ── 3. getUserMedia with 10s timeout ────────────────────────────
@@ -214,14 +228,18 @@ export default function CameraAskAI() {
       let stream: MediaStream | null = null
       let lastError: unknown = null
 
-      for (const constraints of attempts) {
+      for (let i = 0; i < attempts.length; i++) {
         if (cancelled) break
+        log(`getUserMedia attempt ${i + 1}/${attempts.length}...`)
         try {
-          stream = await withTimeout(navigator.mediaDevices.getUserMedia(constraints), 10_000, 'timeout')
+          stream = await withTimeout(navigator.mediaDevices.getUserMedia(attempts[i]), 10_000, 'timeout')
+          log(`getUserMedia attempt ${i + 1}: SUCCESS`)
           break
         } catch (err) {
           lastError = err
-          if ((err as { name?: string }).name === 'TimeoutError') break
+          const e = err as { name?: string; message?: string }
+          log(`getUserMedia attempt ${i + 1}: FAIL name=${e.name} msg=${e.message}`)
+          if (e.name === 'TimeoutError') break
         }
       }
 
@@ -266,46 +284,56 @@ export default function CameraAskAI() {
         }
 
         if (!cancelled) { setCameraError(summary); setCameraErrorDetail(detail) }
+        log(`FAIL: ${summary} — ${detail.split('\n')[0]}`)
         return
       }
 
       // ── 5. Check stream has video tracks ─────────────────────────────
-      if (stream.getVideoTracks().length === 0) {
+      const vTracks = stream.getVideoTracks()
+      log(`stream tracks: ${stream.getTracks().length} total, ${vTracks.length} video`)
+      vTracks.forEach((t, i) => log(`  track[${i}]: ${t.label} readyState=${t.readyState}`))
+      if (vTracks.length === 0) {
         stream.getTracks().forEach(t => t.stop())
         if (!cancelled) {
           setCameraError('No video in stream')
           setCameraErrorDetail('getUserMedia returned a stream with no video tracks. Unplug and replug the webcam then tap Retry.')
         }
+        log('FAIL: no video tracks in stream')
         return
       }
 
       streamRef.current = stream
+      log('stream assigned to video element, polling for frames...')
 
       // ── 6. Feed stream to video element ────────────────────────────
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        videoRef.current.play().catch(() => { /* muted video — autoplay fine */ })
+        videoRef.current.play().catch(e => log(`play() error: ${(e as Error).message}`))
 
-        // Poll videoWidth every 200 ms — this is the ONLY reliable test that
-        // real frames are arriving. 'canplay' fires even with 0-frame streams.
+        let pollCount = 0
         framePoller = setInterval(() => {
           if (cancelled) { clearInterval(framePoller!); return }
           const vid = videoRef.current
+          pollCount++
+          if (pollCount % 10 === 0) {
+            log(`poll ${pollCount}: videoWidth=${vid?.videoWidth ?? 'N/A'} videoHeight=${vid?.videoHeight ?? 'N/A'} readyState=${vid?.readyState ?? 'N/A'}`)
+          }
           if (vid && vid.videoWidth > 0 && vid.videoHeight > 0) {
             clearInterval(framePoller!)
             framePoller = null
             if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null }
+            log(`OK: first frame ${vid.videoWidth}x${vid.videoHeight} after ${pollCount * 200}ms`)
             cameraReadyRef.current = true
             setCameraReady(true)
           }
         }, 200)
 
-        // Watchdog: no real frames within 8s — camera opened but sends nothing.
-        // Uses cameraReadyRef (not state) to avoid the stale-closure bug.
         watchdogTimer = setTimeout(() => {
           if (framePoller) { clearInterval(framePoller); framePoller = null }
           if (!cancelled && !cameraReadyRef.current) {
-            stream?.getTracks().forEach(t => t.stop())
+            const vid = videoRef.current
+            log(`WATCHDOG fired: videoWidth=${vid?.videoWidth} videoHeight=${vid?.videoHeight} readyState=${vid?.readyState}`)
+            stream?.getTracks().forEach(t => { log(`  stopping track: ${t.label} state=${t.readyState}`); t.stop() })
             setCameraError('Camera opened but sent no frames')
             setCameraErrorDetail(
               'The webcam connected but produced no video data in 8 seconds.\n\n' +
@@ -636,24 +664,51 @@ export default function CameraAskAI() {
               style={{ transform: 'scaleX(-1)' }}
             />
 
-            {/* Camera error fallback — detailed diagnostic */}
-            {cameraError && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-900/95 z-30 p-4">
-                <div className="w-full max-w-sm text-white">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xl">📷</span>
-                    <p className="text-sm font-bold">{cameraError}</p>
-                  </div>
-                  {cameraErrorDetail && (
-                    <p className="text-[11px] text-white/70 leading-5 mb-4 whitespace-pre-line">{cameraErrorDetail}</p>
+            {/* Camera error overlay + diagnostic log */}
+            {(cameraError || (!cameraReady && diagLog.length > 0)) && (
+              <div className="absolute inset-0 flex flex-col bg-slate-900/97 z-30 p-3 overflow-hidden">
+
+                {/* Diagnostic log — always visible */}
+                <div className="flex-1 overflow-y-auto mb-3 rounded-lg bg-black/40 p-2 font-mono">
+                  <p className="text-[9px] font-semibold text-[#20a7db] uppercase tracking-wider mb-1">Camera diagnostics</p>
+                  {diagLog.map((line, i) => (
+                    <p key={i} className={`text-[10px] leading-4 whitespace-pre-wrap break-all ${
+                      line.includes('FAIL') || line.includes('WATCHDOG') ? 'text-red-400' :
+                      line.includes('OK:') || line.includes('SUCCESS') ? 'text-green-400' :
+                      line.includes('poll') ? 'text-slate-500' : 'text-slate-300'
+                    }`}>{line}</p>
+                  ))}
+                  {!cameraError && !cameraReady && (
+                    <p className="text-[10px] text-yellow-400 animate-pulse">⏳ waiting...</p>
                   )}
-                  <button
-                    onClick={() => setCameraRetry(r => r + 1)}
-                    className="w-full rounded-xl bg-[#20a7db] py-2 text-xs font-semibold text-white hover:bg-[#1b96c5] transition-colors"
-                  >
-                    🔄 Retry camera
-                  </button>
                 </div>
+
+                {/* Error summary — only when failed */}
+                {cameraError && (
+                  <div className="shrink-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">📷</span>
+                      <p className="text-sm font-bold text-white">{cameraError}</p>
+                    </div>
+                    {cameraErrorDetail && (
+                      <p className="text-[11px] text-white/70 leading-5 mb-3 whitespace-pre-line">{cameraErrorDetail}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setCameraRetry(r => r + 1)}
+                        className="flex-1 rounded-xl bg-[#20a7db] py-2 text-xs font-semibold text-white hover:bg-[#1b96c5] transition-colors"
+                      >
+                        🔄 Retry
+                      </button>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(diagLog.join('\n')).catch(() => {})}
+                        className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70 hover:text-white transition-colors"
+                      >
+                        📋 Copy log
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
