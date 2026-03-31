@@ -113,6 +113,8 @@ export default function CameraAskAI() {
   const [entered, setEntered] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [cameraErrorDetail, setCameraErrorDetail] = useState<string | null>(null)
+  const [cameraRetry, setCameraRetry] = useState(0)
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
@@ -160,23 +162,53 @@ export default function CameraAskAI() {
   /* ── Camera startup ── */
   useEffect(() => {
     let cancelled = false
+    setCameraError(null)
+    setCameraErrorDetail(null)
+    setCameraReady(false)
+
     ;(async () => {
-      // Strategy: try progressively looser constraints so USB webcams on
-      // Raspberry Pi / Linux are always detected even without facingMode support.
-      const attempts = [
-        // 1st: ideal resolution hints, no strict facingMode
-        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false as const },
-        // 2nd: absolute minimum — just "give me any camera"
-        { video: true, audio: false as const },
+      // ── Step 1: Check API availability ──────────────────────────────────
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        if (!cancelled) {
+          setCameraError('Camera API not available')
+          setCameraErrorDetail(
+            navigator.mediaDevices
+              ? 'getUserMedia is missing in this browser.'
+              : window.location.protocol !== 'https:'
+                ? 'Page is not served over HTTPS. Camera API requires HTTPS.'
+                : 'navigator.mediaDevices is undefined. Try a different browser (Chromium recommended).'
+          )
+        }
+        return
+      }
+
+      // ── Step 2: Enumerate devices so the browser registers the camera ────
+      let videoDeviceCount = 0
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        videoDeviceCount = devices.filter(d => d.kind === 'videoinput').length
+        // Note: on first visit labels may be empty until permission is granted — that's OK
+      } catch {
+        // enumerateDevices is not critical, continue
+      }
+
+      if (cancelled) return
+
+      // ── Step 3: Try progressively looser constraints ─────────────────────
+      const attempts: MediaStreamConstraints[] = [
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+        { video: true, audio: false },
       ]
 
       let stream: MediaStream | null = null
       let lastError: unknown = null
 
       for (const constraints of attempts) {
+        if (cancelled) break
         try {
           stream = await navigator.mediaDevices.getUserMedia(constraints)
-          break // success — stop trying
+          break
         } catch (err) {
           lastError = err
         }
@@ -185,7 +217,31 @@ export default function CameraAskAI() {
       if (cancelled) { stream?.getTracks().forEach(t => t.stop()); return }
 
       if (!stream) {
-        if (!cancelled) setCameraError(getErrorMessage(lastError) || 'Camera access denied')
+        const err = lastError as { name?: string; message?: string } | null
+        const name = err?.name ?? ''
+        let summary = 'Camera access denied'
+        let detail = err?.message ?? 'Unknown error'
+
+        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          summary = 'No camera found'
+          detail = videoDeviceCount === 0
+            ? 'The browser sees 0 video devices. The webcam may not be recognised by the OS browser stack.\n\nOn Raspberry Pi OS, run in terminal:\nsudo usermod -aG video $USER\nthen reboot and try again.'
+            : `Browser found ${videoDeviceCount} device(s) but could not open a stream. Unplug and replug the webcam, then click Retry.`
+        } else if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          summary = 'Permission denied'
+          detail = 'Click the camera icon in the browser address bar and choose \'Allow\'. If there is no camera icon, the browser may have blocked it previously — go to Site Settings and reset the camera permission.'
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          summary = 'Camera in use'
+          detail = 'Another app is using the camera. Close any other apps or terminal commands using the webcam (e.g. fswebcam, v4l2-ctl --stream), then click Retry.'
+        } else if (name === 'OverconstrainedError') {
+          summary = 'Camera constraints failed'
+          detail = 'The webcam rejected all resolution requests. Click Retry — the fallback will try the simplest possible request.'
+        }
+
+        if (!cancelled) {
+          setCameraError(summary)
+          setCameraErrorDetail(detail)
+        }
         return
       }
 
@@ -200,7 +256,7 @@ export default function CameraAskAI() {
       cancelled = true
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [])
+  }, [cameraRetry])
 
   /* ── TTS ── */
   const speak = useCallback((text: string) => {
@@ -508,12 +564,23 @@ export default function CameraAskAI() {
               style={{ transform: 'scaleX(-1)' }}
             />
 
-            {/* Camera error fallback */}
+            {/* Camera error fallback — detailed diagnostic */}
             {cameraError && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90">
-                <div className="text-center text-white">
-                  <p className="text-sm font-semibold">Camera unavailable</p>
-                  <p className="mt-1 text-xs text-white/60">{cameraError}</p>
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-900/95 z-30 p-4">
+                <div className="w-full max-w-sm text-white">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xl">📷</span>
+                    <p className="text-sm font-bold">{cameraError}</p>
+                  </div>
+                  {cameraErrorDetail && (
+                    <p className="text-[11px] text-white/70 leading-5 mb-4 whitespace-pre-line">{cameraErrorDetail}</p>
+                  )}
+                  <button
+                    onClick={() => setCameraRetry(r => r + 1)}
+                    className="w-full rounded-xl bg-[#20a7db] py-2 text-xs font-semibold text-white hover:bg-[#1b96c5] transition-colors"
+                  >
+                    🔄 Retry camera
+                  </button>
                 </div>
               </div>
             )}
