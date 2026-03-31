@@ -166,35 +166,47 @@ export default function CameraAskAI() {
     setCameraErrorDetail(null)
     setCameraReady(false)
 
+    // Wrap getUserMedia with a timeout — on Raspberry Pi OS the promise can
+    // hang indefinitely when the V4L2 device opens but produces no frames.
+    function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+      return Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            const e = new Error(label)
+            ;(e as { name: string }).name = 'TimeoutError'
+            reject(e)
+          }, ms)
+        ),
+      ])
+    }
+
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+
     ;(async () => {
       // ── Step 1: Check API availability ──────────────────────────────────
       if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
         if (!cancelled) {
           setCameraError('Camera API not available')
           setCameraErrorDetail(
-            navigator.mediaDevices
-              ? 'getUserMedia is missing in this browser.'
-              : window.location.protocol !== 'https:'
-                ? 'Page is not served over HTTPS. Camera API requires HTTPS.'
-                : 'navigator.mediaDevices is undefined. Try a different browser (Chromium recommended).'
+            window.location.protocol !== 'https:'
+              ? 'Page is not served over HTTPS. Camera API requires HTTPS.'
+              : 'navigator.mediaDevices is undefined. Try Chromium browser.'
           )
         }
         return
       }
 
-      // ── Step 2: Enumerate devices so the browser registers the camera ────
+      // ── Step 2: Enumerate devices ────────────────────────────────────────
       let videoDeviceCount = 0
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
         videoDeviceCount = devices.filter(d => d.kind === 'videoinput').length
-        // Note: on first visit labels may be empty until permission is granted — that's OK
-      } catch {
-        // enumerateDevices is not critical, continue
-      }
+      } catch { /* not critical */ }
 
       if (cancelled) return
 
-      // ── Step 3: Try progressively looser constraints ─────────────────────
+      // ── Step 3: Try progressively looser constraints with a 10s timeout ──
       const attempts: MediaStreamConstraints[] = [
         { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
         { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
@@ -207,10 +219,16 @@ export default function CameraAskAI() {
       for (const constraints of attempts) {
         if (cancelled) break
         try {
-          stream = await navigator.mediaDevices.getUserMedia(constraints)
+          stream = await withTimeout(
+            navigator.mediaDevices.getUserMedia(constraints),
+            10_000,
+            'getUserMedia timed out after 10s'
+          )
           break
         } catch (err) {
           lastError = err
+          // If it's a timeout, don't keep trying with looser constraints
+          if ((err as { name?: string }).name === 'TimeoutError') break
         }
       }
 
@@ -222,20 +240,32 @@ export default function CameraAskAI() {
         let summary = 'Camera access denied'
         let detail = err?.message ?? 'Unknown error'
 
-        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        if (name === 'TimeoutError') {
+          summary = 'Camera timed out (no frames)'
+          detail =
+            'The browser opened the camera device but received no video frames within 10 seconds.\n\n' +
+            'This is a known issue on Raspberry Pi OS Bookworm with some USB webcams.\n\n' +
+            'Fix — run in terminal on your Pi:\n' +
+            '  sudo apt install v4l2loopback-dkms\n' +
+            '  sudo modprobe v4l2loopback\n\n' +
+            'Or try launching Chromium with:\n' +
+            '  chromium-browser --use-fake-ui-for-media-stream\n' +
+            '(replaces camera with a test pattern — for testing only)\n\n' +
+            'Also confirm the camera format: v4l2-ctl --list-formats-ext'
+        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
           summary = 'No camera found'
           detail = videoDeviceCount === 0
-            ? 'The browser sees 0 video devices. The webcam may not be recognised by the OS browser stack.\n\nOn Raspberry Pi OS, run in terminal:\nsudo usermod -aG video $USER\nthen reboot and try again.'
-            : `Browser found ${videoDeviceCount} device(s) but could not open a stream. Unplug and replug the webcam, then click Retry.`
+            ? 'Browser sees 0 video devices.\n\nFix on Raspberry Pi OS:\n  sudo usermod -aG video $USER\n  sudo reboot\n\nAlso check:\n  ls -la /dev/video*'
+            : `Browser found ${videoDeviceCount} device(s) but couldn't open it.\nUnplug, replug the webcam and tap Retry.`
         } else if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
           summary = 'Permission denied'
-          detail = 'Click the camera icon in the browser address bar and choose \'Allow\'. If there is no camera icon, the browser may have blocked it previously — go to Site Settings and reset the camera permission.'
+          detail = 'Click the camera icon in the address bar → Allow.\nOr go to Site Settings and reset the camera permission.'
         } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-          summary = 'Camera in use'
-          detail = 'Another app is using the camera. Close any other apps or terminal commands using the webcam (e.g. fswebcam, v4l2-ctl --stream), then click Retry.'
+          summary = 'Camera already in use'
+          detail = 'Another app has the camera open.\nClose terminal commands using the webcam (fswebcam, v4l2-ctl, etc.) then tap Retry.'
         } else if (name === 'OverconstrainedError') {
-          summary = 'Camera constraints failed'
-          detail = 'The webcam rejected all resolution requests. Click Retry — the fallback will try the simplest possible request.'
+          summary = 'Camera constraints rejected'
+          detail = 'Tap Retry — the fallback will request the camera with no constraints.'
         }
 
         if (!cancelled) {
@@ -245,17 +275,55 @@ export default function CameraAskAI() {
         return
       }
 
+      // ── Step 4: Verify stream has live video tracks ───────────────────────
+      const videoTracks = stream.getVideoTracks()
+      if (videoTracks.length === 0) {
+        stream.getTracks().forEach(t => t.stop())
+        if (!cancelled) {
+          setCameraError('Stream has no video')
+          setCameraErrorDetail('getUserMedia succeeded but returned a stream with no video tracks. Try unplugging and replugging the webcam.')
+        }
+        return
+      }
+
       streamRef.current = stream
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        videoRef.current.play()
-        setCameraReady(true)
+
+        // Mark ready only when actual frames arrive ('canplay'), not just on play()
+        const onCanPlay = () => {
+          if (!cancelled) setCameraReady(true)
+          if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null }
+        }
+        videoRef.current.addEventListener('canplay', onCanPlay, { once: true })
+
+        videoRef.current.play().catch(() => { /* autoplay policy — muted video should be fine */ })
+
+        // Watchdog: if 'canplay' never fires within 12s, the device opened but
+        // sends no frames (common on Pi with MJPEG-only cameras in YUYV mode).
+        watchdogTimer = setTimeout(() => {
+          if (!cancelled && !cameraReady) {
+            stream?.getTracks().forEach(t => t.stop())
+            setCameraError('Camera opened but no frames received')
+            setCameraErrorDetail(
+              'The camera device opened successfully but no video frames arrived.\n\n' +
+              'This usually means the camera outputs in a format Chromium cannot decode (e.g. MJPEG-only camera on Pi).\n\n' +
+              'Run on your Pi to check supported formats:\n' +
+              '  v4l2-ctl --list-formats-ext\n\n' +
+              'If only MJPEG is listed, install v4l2loopback to create a compatible virtual device,\nor try a different USB webcam.'
+            )
+          }
+        }, 12_000)
       }
     })()
+
     return () => {
       cancelled = true
+      if (watchdogTimer) clearTimeout(watchdogTimer)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraRetry])
 
   /* ── TTS ── */
