@@ -206,18 +206,24 @@ export default function CameraAskAI() {
         return
       }
 
-      // ── 2. Enumerate devices ───────────────────────────────────────
+      // ── 2. Enumerate devices (3s timeout — can hang on Pi) ─────────────
       let videoDeviceCount = 0
+      log('calling enumerateDevices...')
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
+        const devices = await withTimeout(
+          navigator.mediaDevices.enumerateDevices(),
+          3_000,
+          'enumerateDevices timed out'
+        )
         const videoDevs = devices.filter(d => d.kind === 'videoinput')
         videoDeviceCount = videoDevs.length
-        log(`enumerateDevices: ${devices.length} total, ${videoDeviceCount} videoinput`)
-        videoDevs.forEach((d, i) => log(`  cam[${i}]: ${d.label || '(no label yet)'} id=${d.deviceId.slice(0,8)}`)) 
+        log(`enumerateDevices OK: ${devices.length} total, ${videoDeviceCount} videoinput`)
+        videoDevs.forEach((d, i) => log(`  cam[${i}]: ${d.label || '(no label)'} id=${d.deviceId.slice(0,8)}`))
       } catch (e) {
-        log(`enumerateDevices error: ${(e as Error).message}`)
+        log(`enumerateDevices FAILED: ${(e as Error).name} — ${(e as Error).message} (skipping, continuing to getUserMedia)`)
       }
       if (cancelled) return
+
 
       // ── 3. getUserMedia with 10s timeout ────────────────────────────
       const attempts: MediaStreamConstraints[] = [
