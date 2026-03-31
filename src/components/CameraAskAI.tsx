@@ -259,13 +259,17 @@ export default function CameraAskAI() {
         let detail = err?.message ?? 'Unknown error'
 
         if (name === 'TimeoutError') {
-          summary = 'Camera request timed out'
+          summary = 'Chromium camera blocked (xdg-portal missing)'
           detail =
-            'The browser tried to open the camera for 10 seconds but got no response.\n\n' +
-            'Most likely fix on Raspberry Pi OS (Bookworm):' +
-            '\n  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk' +
-            '\n  sudo reboot' +
-            '\n\nThis installs the camera portal Chromium needs on Pi OS.'
+            'Both enumerateDevices and getUserMedia hung — this confirms xdg-desktop-portal is not installed on your Raspberry Pi OS.\n\n' +
+            '── PERMANENT FIX (run on Pi terminal) ──\n' +
+            '  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk\n' +
+            '  sudo reboot\n\n' +
+            '── FAST WORKAROUND (right now) ──\n' +
+            'Open this site in Firefox instead of Chromium.\n' +
+            'Firefox uses V4L2 directly and does NOT need xdg-portal.\n\n' +
+            'In Firefox: click the camera icon in the address bar → Allow when prompted.'
+
         } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
           summary = 'No camera found'
           detail = videoDeviceCount === 0
