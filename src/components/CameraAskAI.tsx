@@ -161,20 +161,39 @@ export default function CameraAskAI() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        })
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
-        streamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
-          setCameraReady(true)
+      // Strategy: try progressively looser constraints so USB webcams on
+      // Raspberry Pi / Linux are always detected even without facingMode support.
+      const attempts = [
+        // 1st: ideal resolution hints, no strict facingMode
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false as const },
+        // 2nd: absolute minimum — just "give me any camera"
+        { video: true, audio: false as const },
+      ]
+
+      let stream: MediaStream | null = null
+      let lastError: unknown = null
+
+      for (const constraints of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints)
+          break // success — stop trying
+        } catch (err) {
+          lastError = err
         }
-      } catch (error: unknown) {
-        if (!cancelled) setCameraError(getErrorMessage(error) || 'Camera access denied')
+      }
+
+      if (cancelled) { stream?.getTracks().forEach(t => t.stop()); return }
+
+      if (!stream) {
+        if (!cancelled) setCameraError(getErrorMessage(lastError) || 'Camera access denied')
+        return
+      }
+
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+        setCameraReady(true)
       }
     })()
     return () => {
