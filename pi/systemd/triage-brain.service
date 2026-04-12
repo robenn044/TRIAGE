@@ -1,0 +1,19 @@
+[Unit]
+Description=TRIAGE Robot Brain Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/TRIAGE/pi/brain
+ExecStart=/usr/bin/python3 robot_brain.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+# Safety: stop motors if the service crashes
+ExecStopPost=/usr/bin/python3 -c "import serial,json;s=serial.Serial('/dev/ttyACM0',115200,timeout=1);s.write(json.dumps({'cmd':'STOP'}).encode()+'\\n'.encode());s.close()"
+
+[Install]
+WantedBy=multi-user.target
