@@ -170,89 +170,31 @@ TRIAGE is an Arduino-based line-follower robot being upgraded into an autonomous
 - All code committed and pushed to GitHub
 - Dashboard shows camera feed (MJPEG on LAN, Vercel fallback)
 
-### 🔧 In Progress — Brain Pi Setup
-**Repo cloned, Arduino connected at /dev/ttyUSB0. Still needs:**
+### ✅ Brain Pi Setup — COMPLETE
+- Node.js 20 installed
+- Dashboard built (`npm run build`) — dist/ ready
+- Python venv created, pyserial/httpx/opencv/numpy installed
+- Arduino confirmed at `/dev/ttyUSB0`, PING returns `{"status":"ready","mode":"LINE","fw":"triage-1.0"}`
+- All 3 systemd services installed, enabled, and running:
+  - `triage-dashboard-server` — serves dashboard on port 3000 ✅
+  - `triage-dashboard-kiosk` — Chromium kiosk on Brain Pi screen ✅
+  - `triage-brain` — robot brain daemon ✅
+- Dashboard showing on Brain Pi screen with camera feed from Face Pi ✅
 
-1. **Install Node.js** (for building the dashboard):
-   ```bash
-   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   ```
+**NOTE:** Arduino serial port is `/dev/ttyUSB0` (NOT `/dev/ttyACM0`). Already fixed in `config.py`.
 
-2. **Build the dashboard:**
-   ```bash
-   cd ~/TRIAGE
-   npm install
-   npm run build
-   ```
+**NOTE:** When writing Python test scripts on the Pi via terminal, use `printf` to create files — nano auto-indent and heredoc both cause IndentationError. Example:
+```bash
+printf 'import serial, json, time\ns = serial.Serial("/dev/ttyUSB0", 115200, timeout=2)\n...\n' > ~/test.py && python3 ~/test.py
+```
 
-3. **Create Python venv + install Brain Pi deps:**
-   ```bash
-   cd ~/TRIAGE/pi/brain
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-
-4. **Add user to dialout group (for serial access):**
-   ```bash
-   sudo usermod -aG dialout admin
-   # Log out and back in, or reboot
-   ```
-
-5. **Test Arduino serial communication:**
-   ```bash
-   cd ~/TRIAGE/pi/brain
-   source venv/bin/activate
-   python3 << 'EOF'
-   import serial, json, time
-   s = serial.Serial('/dev/ttyUSB0', 115200, timeout=2)
-   time.sleep(2)
-   s.write(json.dumps({'cmd':'PING'}).encode() + b'\n')
-   time.sleep(0.5)
-   print(s.readline().decode().strip())
-   s.close()
-   EOF
-   ```
-   Should print: `{"pong":true,"mode":"LINE"}`
-
-6. **Test serve_dashboard.py:**
-   ```bash
-   cd ~/TRIAGE/pi/brain
-   python3 serve_dashboard.py
-   ```
-   Open `http://localhost:3000/dashboard` on the Brain Pi — should show the dashboard with camera feed from Face Pi.
-
-7. **Install all 3 systemd services:**
-   ```bash
-   sudo cp ~/TRIAGE/pi/systemd/triage-brain.service /etc/systemd/system/
-   sudo cp ~/TRIAGE/pi/systemd/triage-dashboard-server.service /etc/systemd/system/
-   sudo cp ~/TRIAGE/pi/systemd/triage-dashboard-kiosk.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable triage-brain.service triage-dashboard-server.service triage-dashboard-kiosk.service
-   sudo systemctl start triage-dashboard-server.service
-   sudo systemctl start triage-dashboard-kiosk.service
-   # Start brain last (needs all others running):
-   sudo systemctl start triage-brain.service
-   ```
-
-8. **Verify all services:**
-   ```bash
-   sudo systemctl status triage-brain.service
-   sudo systemctl status triage-dashboard-server.service
-   sudo systemctl status triage-dashboard-kiosk.service
-   ```
-
-### ⏳ Pending — End-to-End Test
-After Brain Pi is set up:
-1. Reboot both Pis
-2. Face Pi screen should show robot face, camera streaming on port 8085
-3. Brain Pi screen should show dashboard with live camera feed at 30fps
-4. Open phone browser → scan QR code on dashboard → phone pairs
-5. Robot switches from LINE_FOLLOW to COMMAND mode
-6. Test AI: ask the robot about what it sees
-7. Test motor controls from dashboard
-8. Press "End Trip" → robot reverts to LINE_FOLLOW
+### ⏳ Next — End-to-End Test
+After both Pis reboot, verify auto-start works, then:
+1. Open phone browser → scan QR code on dashboard → phone pairs
+2. Robot switches from LINE_FOLLOW to COMMAND mode
+3. Test AI: tap mic button, ask robot what it sees
+4. Test motor controls from dashboard (F/B/L/R buttons)
+5. Press "End Trip" → robot reverts to LINE_FOLLOW
 
 ---
 
