@@ -61,18 +61,6 @@ function getErrorMessage(error: unknown) {
 
 /** Capture a JPEG frame from a <video> element, return base64 (no prefix).
  *  Applies scaleX(-1) to match the display correction for the hardware-mirrored webcam. */
-function snapFrame(video: HTMLVideoElement, quality = 0.85): string {
-  const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
-  const ctx = canvas.getContext('2d')!
-  // Mirror the canvas draw to match display — Groq sees the correct orientation
-  ctx.translate(canvas.width, 0)
-  ctx.scale(-1, 1)
-  ctx.drawImage(video, 0, 0)
-  return canvas.toDataURL('image/jpeg', quality).split(',')[1]
-}
-
 /** Pick the most natural-sounding English voice available. */
 function pickVoice(): SpeechSynthesisVoice | null {
   const voices = speechSynthesis.getVoices()
@@ -103,26 +91,23 @@ export default function CameraAskAI() {
   const navigate = useNavigate()
 
   /* ── Refs ── */
-  const videoRef = useRef<HTMLVideoElement>(null)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const isSpeakingRef = useRef(false)
-  const streamRef = useRef<MediaStream | null>(null)
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
-  // Ref for cameraReady — lets async timers read the live value without stale closure
-  const cameraReadyRef = useRef(false)
+  // Stores latest base64 frame from server for AI requests
+  const latestFrameRef = useRef<string | null>(null)
 
   /* ── State ── */
   const [entered, setEntered] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
-  const [cameraErrorDetail, setCameraErrorDetail] = useState<string | null>(null)
-  const [cameraRetry, setCameraRetry] = useState(0)
-  const [diagLog, setDiagLog] = useState<string[]>([])
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
   const [micEnabled, setMicEnabled] = useState(true)
+  // Server camera feed as data URL
+  const [feedSrc, setFeedSrc] = useState<string | null>(null)
 
   // Keep stateRef in sync so lock timer callback can read current state
   useEffect(() => { stateRef.current = state }, [state])
@@ -163,211 +148,46 @@ export default function CameraAskAI() {
     }
   }, [resetLockTimer])
 
-  /* ── Camera startup ── */
+  /* ── Camera feed from server (Face Pi → Vercel → Dashboard) ── */
   useEffect(() => {
     let cancelled = false
-    cameraReadyRef.current = false
-    setCameraError(null)
-    setCameraErrorDetail(null)
-    setCameraReady(false)
-    setDiagLog([])
+    let consecutiveErrors = 0
 
-    const ts = () => new Date().toISOString().slice(11, 23)
-    const log = (msg: string) => setDiagLog(prev => [...prev, `[${ts()}] ${msg}`])
-
-    function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-      return Promise.race([
-        promise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => {
-            const e = new Error(label);(e as { name: string }).name = 'TimeoutError'; reject(e)
-          }, ms)
-        ),
-      ])
-    }
-
-    let watchdogTimer: ReturnType<typeof setTimeout> | null = null
-    let framePoller: ReturnType<typeof setInterval> | null = null
-
-    ;(async () => {
-      // ── 1. API check ───────────────────────────────────────────────────
-      log(`protocol: ${window.location.protocol}`)
-      log(`mediaDevices: ${!!navigator.mediaDevices}`)
-      log(`getUserMedia: ${typeof navigator.mediaDevices?.getUserMedia}`)
-      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-        log('FAIL: Camera API not available')
-        if (!cancelled) {
-          setCameraError('Camera API not available')
-          setCameraErrorDetail(
-            window.location.protocol !== 'https:'
-              ? 'Page is not on HTTPS. Camera requires a secure connection.'
-              : 'navigator.mediaDevices is missing. Use Chromium or Firefox.'
-          )
-        }
-        return
-      }
-
-      // ── 2. Enumerate devices (3s timeout — can hang on Pi) ─────────────
-      let videoDeviceCount = 0
-      log('calling enumerateDevices...')
-      try {
-        const devices = await withTimeout(
-          navigator.mediaDevices.enumerateDevices(),
-          3_000,
-          'enumerateDevices timed out'
-        )
-        const videoDevs = devices.filter(d => d.kind === 'videoinput')
-        videoDeviceCount = videoDevs.length
-        log(`enumerateDevices OK: ${devices.length} total, ${videoDeviceCount} videoinput`)
-        videoDevs.forEach((d, i) => log(`  cam[${i}]: ${d.label || '(no label)'} id=${d.deviceId.slice(0,8)}`))
-      } catch (e) {
-        log(`enumerateDevices FAILED: ${(e as Error).name} — ${(e as Error).message} (skipping, continuing to getUserMedia)`)
-      }
-      if (cancelled) return
-
-
-      // ── 3. getUserMedia with 10s timeout ────────────────────────────
-      const attempts: MediaStreamConstraints[] = [
-        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-        { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
-        { video: true, audio: false },
-      ]
-      let stream: MediaStream | null = null
-      let lastError: unknown = null
-
-      for (let i = 0; i < attempts.length; i++) {
-        if (cancelled) break
-        log(`getUserMedia attempt ${i + 1}/${attempts.length}...`)
+    const poll = async () => {
+      while (!cancelled) {
         try {
-          stream = await withTimeout(navigator.mediaDevices.getUserMedia(attempts[i]), 10_000, 'timeout')
-          log(`getUserMedia attempt ${i + 1}: SUCCESS`)
-          break
-        } catch (err) {
-          lastError = err
-          const e = err as { name?: string; message?: string }
-          log(`getUserMedia attempt ${i + 1}: FAIL name=${e.name} msg=${e.message}`)
-          if (e.name === 'TimeoutError') break
-        }
-      }
-
-      if (cancelled) { stream?.getTracks().forEach(t => t.stop()); return }
-
-      // ── 4. Handle getUserMedia failure ─────────────────────────────
-      if (!stream) {
-        const err = lastError as { name?: string; message?: string } | null
-        const name = err?.name ?? ''
-        let summary = 'Camera error'
-        let detail = err?.message ?? 'Unknown error'
-
-        if (name === 'TimeoutError') {
-          summary = 'Chromium camera blocked (xdg-portal missing)'
-          detail =
-            'Both enumerateDevices and getUserMedia hung — this confirms xdg-desktop-portal is not installed on your Raspberry Pi OS.\n\n' +
-            '── PERMANENT FIX (run on Pi terminal) ──\n' +
-            '  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk\n' +
-            '  sudo reboot\n\n' +
-            '── FAST WORKAROUND (right now) ──\n' +
-            'Open this site in Firefox instead of Chromium.\n' +
-            'Firefox uses V4L2 directly and does NOT need xdg-portal.\n\n' +
-            'In Firefox: click the camera icon in the address bar → Allow when prompted.'
-
-        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-          summary = 'No camera found'
-          detail = videoDeviceCount === 0
-            ? 'The browser sees 0 video devices.\n\nFix on Raspberry Pi OS:' +
-              '\n  sudo usermod -aG video $USER' +
-              '\n  sudo reboot' +
-              '\n\nThen check: ls -la /dev/video*'
-            : `Browser detected ${videoDeviceCount} device(s) but couldn\'t open it. Unplug and replug the webcam, then tap Retry.`
-        } else if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-          summary = 'Camera permission denied'
-          detail =
-            'The browser has blocked camera access for this site.\n\n' +
-            'In Chromium: click the camera icon in the address bar → Allow, then tap Retry.\n\n' +
-            'In Firefox: click the padlock icon → Connection secure → More information → Permissions → set Camera to Allow.\n\n' +
-            'If no icon appears, go to browser Settings → Privacy → Camera permissions and remove the block for this site.'
-        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-          summary = 'Camera already in use'
-          detail = 'Another application has the webcam open. Close it (e.g. fswebcam, cheese, v4l2-ctl), then tap Retry.'
-        } else if (name === 'OverconstrainedError') {
-          summary = 'Camera constraints rejected'
-          detail = 'Tap Retry — it will request the camera with no constraints.'
-        }
-
-        if (!cancelled) { setCameraError(summary); setCameraErrorDetail(detail) }
-        log(`FAIL: ${summary} — ${detail.split('\n')[0]}`)
-        return
-      }
-
-      // ── 5. Check stream has video tracks ─────────────────────────────
-      const vTracks = stream.getVideoTracks()
-      log(`stream tracks: ${stream.getTracks().length} total, ${vTracks.length} video`)
-      vTracks.forEach((t, i) => log(`  track[${i}]: ${t.label} readyState=${t.readyState}`))
-      if (vTracks.length === 0) {
-        stream.getTracks().forEach(t => t.stop())
-        if (!cancelled) {
-          setCameraError('No video in stream')
-          setCameraErrorDetail('getUserMedia returned a stream with no video tracks. Unplug and replug the webcam then tap Retry.')
-        }
-        log('FAIL: no video tracks in stream')
-        return
-      }
-
-      streamRef.current = stream
-      log('stream assigned to video element, polling for frames...')
-
-      // ── 6. Feed stream to video element ────────────────────────────
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play().catch(e => log(`play() error: ${(e as Error).message}`))
-
-        let pollCount = 0
-        framePoller = setInterval(() => {
-          if (cancelled) { clearInterval(framePoller!); return }
-          const vid = videoRef.current
-          pollCount++
-          if (pollCount % 10 === 0) {
-            log(`poll ${pollCount}: videoWidth=${vid?.videoWidth ?? 'N/A'} videoHeight=${vid?.videoHeight ?? 'N/A'} readyState=${vid?.readyState ?? 'N/A'}`)
+          const res = await fetch('/api/camera-feed')
+          if (res.status === 200) {
+            const data = await res.json()
+            if (data.image) {
+              const src = `data:image/jpeg;base64,${data.image}`
+              setFeedSrc(src)
+              latestFrameRef.current = data.image
+              if (!cameraReady) setCameraReady(true)
+              if (cameraError) setCameraError(null)
+              consecutiveErrors = 0
+            }
+          } else if (res.status === 204) {
+            // No frame yet — camera not started
+            if (!cameraReady && consecutiveErrors > 10) {
+              setCameraError('Waiting for camera feed from robot…')
+            }
+            consecutiveErrors++
           }
-          if (vid && vid.videoWidth > 0 && vid.videoHeight > 0) {
-            clearInterval(framePoller!)
-            framePoller = null
-            if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null }
-            log(`OK: first frame ${vid.videoWidth}x${vid.videoHeight} after ${pollCount * 200}ms`)
-            cameraReadyRef.current = true
-            setCameraReady(true)
+        } catch {
+          consecutiveErrors++
+          if (consecutiveErrors > 10 && !cameraError) {
+            setCameraError('Cannot reach camera feed')
           }
-        }, 200)
-
-        watchdogTimer = setTimeout(() => {
-          if (framePoller) { clearInterval(framePoller); framePoller = null }
-          if (!cancelled && !cameraReadyRef.current) {
-            const vid = videoRef.current
-            log(`WATCHDOG fired: videoWidth=${vid?.videoWidth} videoHeight=${vid?.videoHeight} readyState=${vid?.readyState}`)
-            stream?.getTracks().forEach(t => { log(`  stopping track: ${t.label} state=${t.readyState}`); t.stop() })
-            setCameraError('Camera opened but sent no frames')
-            setCameraErrorDetail(
-              'The webcam connected but produced no video data in 8 seconds.\n\n' +
-              'Most likely fix on Raspberry Pi OS (Bookworm):' +
-              '\n  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk' +
-              '\n  sudo reboot' +
-              '\n\nThis installs the camera portal that Chromium on Pi OS requires.' +
-              '\n\nAlso check your webcam video format:' +
-              '\n  v4l2-ctl --list-formats-ext' +
-              '\nIf only MJPG is listed and no YUYV, try a different webcam.'
-            )
-          }
-        }, 8_000)
+        }
+        // Poll at ~3 FPS for dashboard display
+        await new Promise(r => setTimeout(r, 333))
       }
-    })()
-
-    return () => {
-      cancelled = true
-      if (watchdogTimer) clearTimeout(watchdogTimer)
-      if (framePoller) clearInterval(framePoller)
-      streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [cameraRetry])
+
+    poll()
+    return () => { cancelled = true }
+  }, [])
 
   /* ── TTS ── */
   const speak = useCallback((text: string) => {
@@ -416,10 +236,8 @@ export default function CameraAskAI() {
     setTranscript('')
 
     try {
-      let image: string | null = null
-      if (videoRef.current && videoRef.current.readyState >= 2) {
-        image = snapFrame(videoRef.current)
-      }
+      // Use the latest frame from the server camera feed
+      const image = latestFrameRef.current
 
       const res = await fetch('/api/ask', {
         method: 'POST',
@@ -665,59 +483,24 @@ export default function CameraAskAI() {
               {cameraReady ? 'Live' : cameraError ? 'Error' : 'Starting…'}
             </div>
 
-            {/* Video element — CSS scaleX(-1) corrects the hardware-mirrored webcam feed */}
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="absolute inset-0 h-full w-full object-cover"
-              style={{ transform: 'scaleX(-1)' }}
-            />
-
-            {/* Camera error overlay + diagnostic log */}
-            {(cameraError || (!cameraReady && diagLog.length > 0)) && (
-              <div className="absolute inset-0 flex flex-col bg-slate-900/97 z-30 p-3 overflow-hidden">
-
-                {/* Diagnostic log — always visible */}
-                <div className="flex-1 overflow-y-auto mb-3 rounded-lg bg-black/40 p-2 font-mono">
-                  <p className="text-[9px] font-semibold text-[#20a7db] uppercase tracking-wider mb-1">Camera diagnostics</p>
-                  {diagLog.map((line, i) => (
-                    <p key={i} className={`text-[10px] leading-4 whitespace-pre-wrap break-all ${
-                      line.includes('FAIL') || line.includes('WATCHDOG') ? 'text-red-400' :
-                      line.includes('OK:') || line.includes('SUCCESS') ? 'text-green-400' :
-                      line.includes('poll') ? 'text-slate-500' : 'text-slate-300'
-                    }`}>{line}</p>
-                  ))}
-                  {!cameraError && !cameraReady && (
-                    <p className="text-[10px] text-yellow-400 animate-pulse">⏳ waiting...</p>
-                  )}
-                </div>
-
-                {/* Error summary — only when failed */}
-                {cameraError && (
-                  <div className="shrink-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-lg">📷</span>
-                      <p className="text-sm font-bold text-white">{cameraError}</p>
-                    </div>
-                    {cameraErrorDetail && (
-                      <p className="text-[11px] text-white/70 leading-5 mb-3 whitespace-pre-line">{cameraErrorDetail}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setCameraRetry(r => r + 1)}
-                        className="flex-1 rounded-xl bg-[#20a7db] py-2 text-xs font-semibold text-white hover:bg-[#1b96c5] transition-colors"
-                      >
-                        🔄 Retry
-                      </button>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(diagLog.join('\n')).catch(() => {})}
-                        className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70 hover:text-white transition-colors"
-                      >
-                        📋 Copy log
-                      </button>
-                    </div>
+            {/* Camera feed from server */}
+            {feedSrc ? (
+              <img
+                src={feedSrc}
+                alt="Robot camera"
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                {cameraError ? (
+                  <div className="text-center px-4">
+                    <span className="text-lg">📷</span>
+                    <p className="mt-2 text-xs font-medium text-white/70">{cameraError}</p>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-[#20a7db]/60" />
+                    <p className="mt-2 text-[10px] text-white/50">Connecting to camera…</p>
                   </div>
                 )}
               </div>
