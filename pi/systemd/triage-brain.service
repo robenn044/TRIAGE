@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=triagedashboard
-WorkingDirectory=/home/triagedashboard/TRIAGE/pi/brain
-ExecStart=/home/triagedashboard/TRIAGE/pi/brain/venv/bin/python robot_brain.py
+User=admin
+WorkingDirectory=/home/admin/TRIAGE/pi/brain
+ExecStart=/home/admin/TRIAGE/pi/brain/venv/bin/python robot_brain.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

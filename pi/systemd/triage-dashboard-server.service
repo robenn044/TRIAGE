@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=triagedashboard
-WorkingDirectory=/home/triagedashboard/TRIAGE/pi/brain
+User=admin
+WorkingDirectory=/home/admin/TRIAGE/pi/brain
 ExecStart=/usr/bin/python3 serve_dashboard.py
 Restart=always
 RestartSec=5
