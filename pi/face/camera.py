@@ -36,10 +36,12 @@ CAMERA_INDEX = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 CAPTURE_FPS = 10                    # Capture rate
-VERCEL_UPLOAD_FPS = 2               # Upload to Vercel at lower rate (bandwidth)
+VERCEL_UPLOAD_FPS = 4               # Upload to Vercel (increased from 2)
 LAN_SERVE_PORT = 8085               # Local HTTP port for Brain Pi
 VERCEL_CAMERA_FEED_URL = "https://triage-ashy.vercel.app/api/camera-feed"
 JPEG_QUALITY = 70
+VERCEL_JPEG_QUALITY = 40            # Lower quality for Vercel (smaller payload = faster)
+VERCEL_RESIZE = (320, 240)          # Downscale for Vercel upload (saves ~75% bandwidth)
 
 # ── Shared State ────────────────────────────────────────────
 latest_frame_lock = Lock()
@@ -90,9 +92,14 @@ def start_lan_server():
 
 
 # ── Vercel Upload ──────────────────────────────────────────
-async def upload_to_vercel(client: httpx.AsyncClient, jpeg_b64: str):
-    """POST the latest frame to Vercel /api/camera-feed."""
+async def upload_to_vercel(client: httpx.AsyncClient, frame: np.ndarray):
+    """Resize, compress and POST frame to Vercel /api/camera-feed."""
     try:
+        # Downscale for faster upload
+        small = cv2.resize(frame, VERCEL_RESIZE, interpolation=cv2.INTER_AREA)
+        _, jpeg_buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, VERCEL_JPEG_QUALITY])
+        jpeg_b64 = base64.b64encode(jpeg_buf.tobytes()).decode("ascii")
+
         resp = await client.post(
             VERCEL_CAMERA_FEED_URL,
             json={"image": jpeg_b64},
@@ -145,12 +152,11 @@ async def capture_loop():
             with latest_frame_lock:
                 latest_frame_jpeg = jpeg_bytes
 
-            # Upload to Vercel at lower rate
+            # Upload to Vercel at lower rate (resized separately)
             now = time.monotonic()
             if now - last_upload >= upload_interval:
                 last_upload = now
-                jpeg_b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-                asyncio.create_task(upload_to_vercel(client, jpeg_b64))
+                asyncio.create_task(upload_to_vercel(client, frame))
 
             # Maintain capture rate
             elapsed = time.monotonic() - loop_start

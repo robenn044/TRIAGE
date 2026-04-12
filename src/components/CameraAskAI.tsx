@@ -180,8 +180,8 @@ export default function CameraAskAI() {
             setCameraError('Cannot reach camera feed')
           }
         }
-        // Poll at ~3 FPS for dashboard display
-        await new Promise(r => setTimeout(r, 333))
+        // Poll at ~5 FPS for smoother display
+        await new Promise(r => setTimeout(r, 200))
       }
     }
 
