@@ -148,8 +148,22 @@ export default function CameraAskAI() {
     }
   }, [resetLockTimer])
 
-  /* ── Camera feed from server (Face Pi → Vercel → Dashboard) ── */
+  /* ── Camera feed: MJPEG stream (LAN) with Vercel fallback ── */
+  // MJPEG URL: injected by serve_dashboard.py at runtime, or set via env var
+  const mjpegUrl = (window as any).__TRIAGE_CAMERA_URL
+    || import.meta.env.VITE_CAMERA_STREAM_URL
+    || null
+
   useEffect(() => {
+    // If MJPEG URL is configured, use it directly (no polling needed)
+    if (mjpegUrl) {
+      setFeedSrc(mjpegUrl)
+      setCameraReady(true)
+      latestFrameRef.current = '__mjpeg_stream__'
+      return
+    }
+
+    // Fallback: poll Vercel /api/camera-feed (slower, for remote access)
     let cancelled = false
     let consecutiveErrors = 0
 
@@ -168,7 +182,6 @@ export default function CameraAskAI() {
               consecutiveErrors = 0
             }
           } else if (res.status === 204) {
-            // No frame yet — camera not started
             if (!cameraReady && consecutiveErrors > 10) {
               setCameraError('Waiting for camera feed from robot…')
             }
@@ -180,14 +193,13 @@ export default function CameraAskAI() {
             setCameraError('Cannot reach camera feed')
           }
         }
-        // Poll at ~5 FPS for smoother display
         await new Promise(r => setTimeout(r, 200))
       }
     }
 
     poll()
     return () => { cancelled = true }
-  }, [])
+  }, [mjpegUrl])
 
   /* ── TTS ── */
   const speak = useCallback((text: string) => {
@@ -236,8 +248,28 @@ export default function CameraAskAI() {
     setTranscript('')
 
     try {
-      // Use the latest frame from the server camera feed
-      const image = latestFrameRef.current
+      // Get the latest frame for AI analysis
+      let image: string | null = latestFrameRef.current
+      // If using MJPEG stream, fetch a snapshot from Face Pi for AI
+      if (image === '__mjpeg_stream__' && mjpegUrl) {
+        try {
+          const snapUrl = mjpegUrl.replace('/stream', '/frame')
+          const snapRes = await fetch(snapUrl)
+          if (snapRes.ok) {
+            const blob = await snapRes.blob()
+            const reader = new FileReader()
+            image = await new Promise((resolve) => {
+              reader.onloadend = () => {
+                const result = reader.result as string
+                resolve(result.split(',')[1] || null)
+              }
+              reader.readAsDataURL(blob)
+            })
+          }
+        } catch {
+          image = null
+        }
+      }
 
       const res = await fetch('/api/ask', {
         method: 'POST',
