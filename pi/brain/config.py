@@ -5,11 +5,11 @@ All tunable parameters in one place.
 """
 
 # ── Serial ──────────────────────────────────────────────────
-ARDUINO_PORT = "/dev/ttyACM0"
+ARDUINO_PORT = "/dev/ttyUSB0"
 ARDUINO_BAUD = 115200
 
 # ── Camera (Face Pi LAN stream) ────────────────────────────
-FACE_PI_CAMERA_URL = "http://face-pi.local:8085/frame"
+FACE_PI_CAMERA_URL = "http://triageface.local:8085/frame"
 CAMERA_FRAME_WIDTH = 640
 CAMERA_FRAME_HEIGHT = 480
 
