@@ -1,16 +1,16 @@
 [Unit]
 Description=TRIAGE Robot Face Kiosk (Face Pi Screen)
-After=graphical-session.target triage-camera.service
+After=graphical.target triage-camera.service
 Wants=triage-camera.service
 
 [Service]
 Type=simple
-User=triageface
+User=admin
 Environment=DISPLAY=:0
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/bin/chromium-browser --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --no-first-run https://triage-ashy.vercel.app/
+ExecStart=/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --no-first-run https://triage-ashy.vercel.app/
 Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=graphical.target

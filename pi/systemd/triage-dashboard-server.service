@@ -1,13 +1,13 @@
 [Unit]
-Description=TRIAGE Face Pi Camera Stream
+Description=TRIAGE Local Dashboard Server (Brain Pi)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=admin
-WorkingDirectory=/home/admin/TRIAGE/pi/face
-ExecStart=/home/admin/TRIAGE/pi/face/venv/bin/python camera.py
+User=triagedashboard
+WorkingDirectory=/home/triagedashboard/TRIAGE/pi/brain
+ExecStart=/usr/bin/python3 serve_dashboard.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
