@@ -175,7 +175,7 @@ void handleCommand(const char* json) {
     return;
   }
 
-  // --- MODE SWITCH ---
+  // --- MODE SWITCH (works in any mode) ---
   if (strcmp(cmd, "MODE") == 0) {
     const char* mode = doc["mode"];
     if (mode && strcmp(mode, "COMMAND") == 0) {
@@ -188,6 +188,20 @@ void handleCommand(const char* json) {
     } else {
       Serial.println("{\"error\":\"invalid_mode\"}");
     }
+    return;
+  }
+
+  // --- PING (works in any mode) ---
+  if (strcmp(cmd, "PING") == 0) {
+    Serial.print("{\"pong\":true,\"mode\":\"");
+    Serial.print(currentMode == COMMAND ? "COMMAND" : "LINE");
+    Serial.println("\"}");
+    return;
+  }
+
+  // --- SENSOR (works in any mode) ---
+  if (strcmp(cmd, "SENSOR") == 0) {
+    sendTelemetry();
     return;
   }
 
@@ -210,18 +224,6 @@ void handleCommand(const char* json) {
   if (strcmp(cmd, "STOP") == 0) {
     stopMotors();
     Serial.println("{\"ack\":\"STOP\"}");
-    return;
-  }
-
-  // --- PING ---
-  if (strcmp(cmd, "PING") == 0) {
-    Serial.println("{\"ack\":\"PONG\"}");
-    return;
-  }
-
-  // --- SENSOR ---
-  if (strcmp(cmd, "SENSOR") == 0) {
-    sendTelemetry();
     return;
   }
 
