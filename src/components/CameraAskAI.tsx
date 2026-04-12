@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Map, MapPin, Mic, MicOff, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import RobotFace from './RobotFace'
+import RobotControls from './RobotControls'
 import EndTripButton from './EndTripButton'
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -765,32 +766,34 @@ export default function CameraAskAI() {
         </section>
 
         {/* Right sidebar */}
-        <aside className="flex w-[188px] shrink-0 flex-col rounded-2xl border border-[#20a7db]/[0.12] bg-[#eff9fd] p-3 shadow-sm">
-          <h3 className="text-sm font-semibold tracking-tight text-slate-900">
-            Itinerary planner
-          </h3>
-          <p className="mt-1 text-xs leading-4 text-slate-600">
-            Plan a city trip in Albania by answering a few quick questions.
-          </p>
+        <aside className="flex w-[188px] shrink-0 flex-col gap-3 rounded-2xl border border-[#20a7db]/[0.12] bg-[#eff9fd] p-3 shadow-sm">
+          {/* ── Robot Controls ── */}
+          <RobotControls />
 
-          <div className="mt-3 space-y-2">
-            {PLANNER_STEPS.map((item, i) => (
-              <div key={item} className="flex items-start gap-2">
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-[#20a7db]">
-                  {i + 1}
-                </span>
-                <p className="text-xs leading-4 text-slate-600">{item}</p>
-              </div>
-            ))}
-          </div>
+          {/* ── Itinerary Planner ── */}
+          <div className="mt-auto">
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Itinerary planner
+            </h3>
+            <div className="mt-1.5 space-y-1.5">
+              {PLANNER_STEPS.map((item, i) => (
+                <div key={item} className="flex items-start gap-1.5">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-[#20a7db]">
+                    {i + 1}
+                  </span>
+                  <p className="text-[10px] leading-4 text-slate-600">{item}</p>
+                </div>
+              ))}
+            </div>
 
-          <div className="mt-auto grid gap-1.5 pt-3">
-            <Button
-              onClick={() => navigate('/itinerary')}
-              className="h-9 bg-[#20a7db] text-xs shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]"
-            >
-              Open itinerary planner
-            </Button>
+            <div className="mt-2 grid gap-1.5">
+              <Button
+                onClick={() => navigate('/itinerary')}
+                className="h-8 bg-[#20a7db] text-[10px] shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]"
+              >
+                Open planner
+              </Button>
+            </div>
           </div>
         </aside>
       </main>

@@ -7,7 +7,6 @@ import Index from "./pages/Index.tsx";
 import CameraAskAI from "./components/CameraAskAI.tsx";
 import Itinerary from "./pages/Itinerary.tsx";
 import Maps from "./pages/Maps.tsx";
-import RobotDashboard from "./pages/RobotDashboard.tsx";
 import PhoneLink from "./pages/PhoneLink.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
@@ -22,7 +21,6 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/dashboard" element={<CameraAskAI />} />
-          <Route path="/robot" element={<RobotDashboard />} />
           <Route path="/link" element={<PhoneLink />} />
           <Route path="/itinerary" element={<Itinerary />} />
           <Route path="/maps" element={<Maps />} />
