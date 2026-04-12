@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/TRIAGE/pi/face
-ExecStart=/usr/bin/python3 camera.py
+ExecStart=/home/pi/TRIAGE/pi/face/venv/bin/python camera.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
