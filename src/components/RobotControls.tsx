@@ -49,6 +49,7 @@ export default function RobotControls() {
   // Poll robot state
   const { data: robotState } = useQuery<{
     state: string
+    mode: string
     safety: string
     phone_paired: boolean
     tracking: boolean
@@ -84,8 +85,10 @@ export default function RobotControls() {
   const send = (action: string) => mutation.mutate(action)
 
   const currentState = robotState?.state ?? 'IDLE'
+  const robotMode = robotState?.mode ?? 'LINE_FOLLOW'
   const safety = robotState?.safety ?? 'CLEAR'
   const phonePaired = phoneStatus?.paired ?? false
+  const isLineFollow = robotMode === 'LINE_FOLLOW'
   const isIdle = currentState === 'IDLE'
   const isActive = ['TOURING', 'AT_POI', 'FOLLOWING'].includes(currentState)
 
@@ -107,11 +110,18 @@ export default function RobotControls() {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* State badge */}
+      {/* Mode + State badge */}
       <div className="flex items-center justify-between">
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${stateColor}`}>
-          {currentState}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${stateColor}`}>
+            {currentState}
+          </span>
+          {isLineFollow && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-semibold text-amber-700">
+              Line Mode
+            </span>
+          )}
+        </div>
         {/* Safety indicator */}
         {safety === 'DANGER' ? (
           <ShieldAlert className="h-3.5 w-3.5 text-red-500" />
@@ -122,31 +132,38 @@ export default function RobotControls() {
         )}
       </div>
 
-      {/* Control buttons */}
+      {/* Info banner when in line-follow mode */}
+      {isLineFollow && !phonePaired && (
+        <div className="rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] text-amber-700 ring-1 ring-amber-200">
+          🤖 Robot is following the line autonomously. Connect a phone to enable AI mode.
+        </div>
+      )}
+
+      {/* Control buttons — only enabled in AI/COMMAND mode */}
       <div className="grid grid-cols-2 gap-1.5">
         <button
-          disabled={!isIdle || mutation.isPending}
+          disabled={isLineFollow || !isIdle || mutation.isPending}
           onClick={() => send('start_trip')}
           className="flex items-center justify-center gap-1 rounded-lg bg-green-500/10 px-2 py-1.5 text-[10px] font-semibold text-green-700 ring-1 ring-green-500/20 transition hover:bg-green-500/20 disabled:opacity-40"
         >
           <Play className="h-3 w-3" /> Start
         </button>
         <button
-          disabled={(!isActive && !isIdle) || mutation.isPending}
+          disabled={isLineFollow || (!isActive && !isIdle) || mutation.isPending}
           onClick={() => send('follow_me')}
           className="flex items-center justify-center gap-1 rounded-lg bg-purple-500/10 px-2 py-1.5 text-[10px] font-semibold text-purple-700 ring-1 ring-purple-500/20 transition hover:bg-purple-500/20 disabled:opacity-40"
         >
           <UserRound className="h-3 w-3" /> Follow
         </button>
         <button
-          disabled={!isActive || mutation.isPending}
+          disabled={isLineFollow || !isActive || mutation.isPending}
           onClick={() => send('pause')}
           className="flex items-center justify-center gap-1 rounded-lg bg-amber-500/10 px-2 py-1.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-500/20 transition hover:bg-amber-500/20 disabled:opacity-40"
         >
           <Pause className="h-3 w-3" /> Pause
         </button>
         <button
-          disabled={!isActive || mutation.isPending}
+          disabled={isLineFollow || !isActive || mutation.isPending}
           onClick={() => send('resume')}
           className="flex items-center justify-center gap-1 rounded-lg bg-[#20a7db]/10 px-2 py-1.5 text-[10px] font-semibold text-[#20a7db] ring-1 ring-[#20a7db]/20 transition hover:bg-[#20a7db]/20 disabled:opacity-40"
         >

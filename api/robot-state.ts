@@ -11,6 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 interface RobotState {
   state: string        // FSM state: IDLE, TOURING, AT_POI, FOLLOWING, END_TRIP
+  mode: string         // LINE_FOLLOW or COMMAND
   ir_l: number         // Left IR sensor (0 or 1)
   ir_r: number         // Right IR sensor (0 or 1)
   poi: string | null   // Current Point of Interest name
@@ -18,11 +19,14 @@ interface RobotState {
   speed_r: number      // Right motor speed
   tracking: boolean    // Whether target following is active
   narration: string | null  // Latest AI narration text
+  safety: string       // CLEAR, CAUTION, or DANGER
+  phone_paired: boolean
   timestamp: number
 }
 
 let currentState: RobotState = {
   state: 'IDLE',
+  mode: 'LINE_FOLLOW',
   ir_l: 0,
   ir_r: 0,
   poi: null,
@@ -30,6 +34,8 @@ let currentState: RobotState = {
   speed_r: 0,
   tracking: false,
   narration: null,
+  safety: 'CLEAR',
+  phone_paired: false,
   timestamp: Date.now(),
 }
 
@@ -48,6 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     currentState = {
       state: body.state ?? currentState.state,
+      mode: body.mode ?? currentState.mode,
       ir_l: body.ir_l ?? currentState.ir_l,
       ir_r: body.ir_r ?? currentState.ir_r,
       poi: body.poi ?? currentState.poi,
@@ -55,6 +62,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       speed_r: body.speed_r ?? currentState.speed_r,
       tracking: body.tracking ?? currentState.tracking,
       narration: body.narration ?? currentState.narration,
+      safety: body.safety ?? currentState.safety,
+      phone_paired: body.phone_paired ?? currentState.phone_paired,
       timestamp: Date.now(),
     }
 

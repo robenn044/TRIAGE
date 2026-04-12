@@ -120,6 +120,7 @@ class RobotBrain:
         self._safety_level = "CLEAR"
         self._phone_paired = False
         self._phone_lost_since: Optional[float] = None
+        self._ai_mode = False  # True = COMMAND mode, False = LINE_FOLLOW
 
     # ── Lifecycle ───────────────────────────────────────────
 
@@ -127,17 +128,18 @@ class RobotBrain:
         """Start the robot brain."""
         logger.info("Starting TRIAGE Robot Brain...")
 
-        # Connect to Arduino
+        # Connect to Arduino (stays in LINE_FOLLOW until phone pairs)
         if not self.bridge.connect():
             logger.error("Failed to connect to Arduino. Check USB cable.")
             sys.exit(1)
 
-        # Switch Arduino to command mode
-        self.bridge.set_command_mode()
-        self.bridge.stop()
+        # Keep Arduino in LINE_FOLLOW mode by default.
+        # When a phone pairs, we switch to COMMAND mode for full AI control.
+        self.bridge.set_line_follow_mode()
+        self._ai_mode = False
 
         self._running = True
-        logger.info("Brain started. State: %s", self.fsm.state)
+        logger.info("Brain started in LINE_FOLLOW mode. Waiting for phone to pair...")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             self._client = client
@@ -169,9 +171,15 @@ class RobotBrain:
     # ── Main Loop ──────────────────────────────────────────
 
     async def _main_loop(self):
-        """Core loop: fetch frame, process based on current state."""
+        """Core loop: fetch frame, process based on current state.
+        Only active when phone is paired (AI/COMMAND mode)."""
         while self._running:
             try:
+                # In LINE_FOLLOW mode, Arduino handles everything autonomously
+                if not self._ai_mode:
+                    await asyncio.sleep(0.5)
+                    continue
+
                 state = self.fsm.state
 
                 if state == "IDLE":
@@ -323,7 +331,7 @@ class RobotBrain:
         self._speed_r = right
 
     async def _handle_end_trip(self):
-        """End trip: stop everything, reset to IDLE."""
+        """End trip: stop AI control, revert to line-follow, reset to IDLE."""
         self.bridge.stop()
         self._speed_l = 0
         self._speed_r = 0
@@ -335,6 +343,11 @@ class RobotBrain:
         self.tracker.unlock_target()
         self.collision.set_ignore_target(None)
         self.ble.unpair()
+
+        # Revert to LINE_FOLLOW — robot becomes simple line-follower again
+        self.bridge.set_line_follow_mode()
+        self._ai_mode = False
+        logger.info("Reverted to LINE_FOLLOW mode")
 
         # Reset phone link session on Vercel
         try:
@@ -452,6 +465,7 @@ class RobotBrain:
         telemetry = self.bridge.telemetry
         state = {
             "state": self.fsm.state,
+            "mode": "COMMAND" if self._ai_mode else "LINE_FOLLOW",
             "ir_l": telemetry.get("ir_l", 0),
             "ir_r": telemetry.get("ir_r", 0),
             "poi": self._current_poi,
@@ -496,7 +510,8 @@ class RobotBrain:
             return SafetyLevel.CLEAR
 
     async def _phone_link_loop(self):
-        """Poll Vercel for phone link status — AirTag-like presence detection."""
+        """Poll Vercel for phone link status — AirTag-like presence detection.
+        Controls mode switching: no phone = LINE_FOLLOW, phone paired = COMMAND."""
         phone_link_url = f"{VERCEL_BASE_URL}/api/phone-link"
 
         while self._running:
@@ -510,6 +525,13 @@ class RobotBrain:
                     if self._phone_paired:
                         self._phone_lost_since = None
 
+                        # Phone just connected → switch to AI/COMMAND mode
+                        if not was_paired:
+                            logger.info("Phone paired! Switching to COMMAND mode.")
+                            self.bridge.set_command_mode()
+                            self.bridge.stop()
+                            self._ai_mode = True
+
                         # Check for "I'm here" signal
                         if data.get("signal") == "here":
                             logger.info("Phone: tourist sent 'I'm here' signal!")
@@ -520,16 +542,22 @@ class RobotBrain:
                             self._phone_lost_since = time.monotonic()
                             logger.warning("Phone: heartbeat lost — starting timeout")
 
-                    # If phone lost for too long, pause robot for safety
+                    # If phone lost for too long, revert to LINE_FOLLOW
                     if (
                         self._phone_lost_since is not None
-                        and self.fsm.state in ("TOURING", "FOLLOWING")
                         and (time.monotonic() - self._phone_lost_since) > PHONE_LOST_TIMEOUT
                     ):
-                        logger.warning("Phone lost for >%.0fs — pausing robot", PHONE_LOST_TIMEOUT)
-                        self.bridge.stop()
-                        self._speed_l = 0
-                        self._speed_r = 0
+                        if self._ai_mode:
+                            logger.warning(
+                                "Phone lost for >%.0fs — reverting to LINE_FOLLOW",
+                                PHONE_LOST_TIMEOUT,
+                            )
+                            self.bridge.stop()
+                            self._speed_l = 0
+                            self._speed_r = 0
+                            self.bridge.set_line_follow_mode()
+                            self._ai_mode = False
+                            self.fsm.reset()
 
             except httpx.HTTPError as e:
                 logger.debug("Phone link poll error: %s", e)
