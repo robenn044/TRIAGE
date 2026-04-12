@@ -5,7 +5,7 @@ Wants=triage-camera.service
 
 [Service]
 Type=simple
-User=pi
+User=triageface
 Environment=DISPLAY=:0
 ExecStartPre=/bin/sleep 5
 ExecStart=/usr/bin/chromium-browser --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --no-first-run https://triage-ashy.vercel.app/

@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/TRIAGE/pi/face
-ExecStart=/home/pi/TRIAGE/pi/face/venv/bin/python camera.py
+User=triageface
+WorkingDirectory=/home/triageface/TRIAGE/pi/face
+ExecStart=/home/triageface/TRIAGE/pi/face/venv/bin/python camera.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
