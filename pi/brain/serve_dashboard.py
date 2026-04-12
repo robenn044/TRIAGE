@@ -27,7 +27,7 @@ DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", 
 VERCEL_BASE = "https://triage-ashy.vercel.app"
 
 
-class DashboardHandler(http.server.SimpleHTTPHandler):
+class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """
     Serves static files from dist/ and proxies /api/* requests to Vercel.
     """
