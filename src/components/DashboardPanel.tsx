@@ -36,6 +36,7 @@ interface SpeechRecognitionInstance {
   interimResults: boolean
   lang: string
   maxAlternatives: number
+  onstart: (() => void) | null
   onresult: ((event: SpeechRecognitionEvent) => void) | null
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
   onend: (() => void) | null
@@ -229,6 +230,7 @@ export default function DashboardPanel() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const isSpeakingRef = useRef(false)
+  const restartAfterSpeechRef = useRef(false)
   const stateRef = useRef<AssistantState>('idle')
 
   const [entered, setEntered] = useState(false)
@@ -256,6 +258,25 @@ export default function DashboardPanel() {
       videoRef.current.srcObject = null
     }
   }, [])
+
+  const restartRecognitionSoon = useCallback((delayMs = 350) => {
+    if (!micEnabled || !micPermissionGranted || !recognitionRef.current) {
+      return
+    }
+
+    window.setTimeout(() => {
+      if (!micEnabled || !micPermissionGranted || !recognitionRef.current || isSpeakingRef.current) {
+        return
+      }
+
+      try {
+        recognitionRef.current.start()
+        setState('listening')
+      } catch {
+        // ignore duplicate start attempts
+      }
+    }, delayMs)
+  }, [micEnabled, micPermissionGranted])
 
   const requestCameraAccess = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -354,6 +375,8 @@ export default function DashboardPanel() {
 
   const speak = useCallback((text: string) => {
     speechSynthesis.cancel()
+    restartAfterSpeechRef.current = micEnabled && micPermissionGranted
+    isSpeakingRef.current = true
 
     try {
       recognitionRef.current?.stop()
@@ -368,28 +391,43 @@ export default function DashboardPanel() {
     utterance.voice = choosePreferredVoice()
 
     utterance.onstart = () => {
-      isSpeakingRef.current = true
+      stateRef.current = 'speaking'
       setState('speaking')
     }
 
     utterance.onend = () => {
       isSpeakingRef.current = false
-      if (micEnabled && micPermissionGranted) {
-        setState('listening')
+      if (restartAfterSpeechRef.current) {
+        stateRef.current = 'listening'
+        restartRecognitionSoon()
       } else if (cameraReady) {
+        stateRef.current = 'idle'
         setState('idle')
       }
     }
 
     utterance.onerror = () => {
       isSpeakingRef.current = false
-      setState(micEnabled && micPermissionGranted ? 'listening' : 'idle')
+      if (restartAfterSpeechRef.current) {
+        stateRef.current = 'listening'
+        restartRecognitionSoon()
+      } else {
+        stateRef.current = 'idle'
+        setState('idle')
+      }
     }
 
     speechSynthesis.speak(utterance)
-  }, [cameraReady, micEnabled, micPermissionGranted])
+  }, [cameraReady, micEnabled, micPermissionGranted, restartRecognitionSoon])
 
   const askGemma = useCallback(async (prompt: string) => {
+    try {
+      recognitionRef.current?.stop()
+    } catch {
+      // ignore
+    }
+
+    stateRef.current = 'processing'
     setState('processing')
     setTranscript('')
 
@@ -459,6 +497,13 @@ export default function DashboardPanel() {
     recognition.lang = 'en-US'
     recognition.maxAlternatives = 1
     recognitionRef.current = recognition
+
+    recognition.onstart = () => {
+      setMicError(null)
+      setMicErrorDetail(null)
+      stateRef.current = 'listening'
+      setState('listening')
+    }
 
     let silenceTimer: ReturnType<typeof setTimeout> | null = null
     let accumulated = ''
@@ -541,7 +586,12 @@ export default function DashboardPanel() {
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') {
+      if (event.error === 'aborted') {
+        return
+      }
+
+      if (event.error === 'no-speech') {
+        restartRecognitionSoon(250)
         return
       }
 
@@ -550,6 +600,10 @@ export default function DashboardPanel() {
         setMicPermissionGranted(false)
         setMicError('Microphone permission denied')
         setMicErrorDetail('Allow microphone access in Chrome to use the free English STT.')
+      } else if (event.error === 'audio-capture') {
+        setMicError('Microphone is not receiving sound')
+        setMicErrorDetail('Chrome has microphone access, but no audio input is reaching speech recognition. Check the selected microphone and retry.')
+        restartRecognitionSoon(700)
       } else {
         setMicError('Speech recognition error')
         setMicErrorDetail(`Chrome STT returned: ${event.error}`)
