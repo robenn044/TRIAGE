@@ -46,7 +46,8 @@ SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
     "When shown an image, describe what you see and answer the tourist's question directly. "
     "Keep answers under 3 sentences unless more detail is clearly needed. "
-    "Do not show your reasoning, bullet points, or internal analysis unless the user asks for them. "
+    "Return only the final answer the tourist should hear. "
+    "Do not show your reasoning, bullet points, role labels, checklists, self-critique, or internal analysis unless the user asks for them. "
     "Be warm, informative, and focus on what would interest a tourist."
 )
 
@@ -80,22 +81,74 @@ def json_response(handler: http.server.BaseHTTPRequestHandler, status: int, payl
     handler.wfile.write(body)
 
 
+def build_user_prompt(prompt: str, has_image: bool):
+    image_clause = (
+        "An image is attached. If it matters, describe what you actually see before answering."
+        if has_image
+        else "No image is attached. Do not mention any missing image unless it is important."
+    )
+    return (
+        f"{prompt.strip()}\n\n"
+        f"{image_clause}\n"
+        "Reply as Triage in natural spoken prose.\n"
+        "Return only the final answer text.\n"
+        "Do not include bullets, labels, checklists, quoted drafts, or hidden reasoning."
+    )
+
+
+def clean_model_answer(answer: str):
+    text = answer.strip()
+    if not text:
+        return text
+
+    if any(marker in text for marker in ("User says:", "Role:", "Constraint:", "Task:")):
+        quoted_lines = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip().lstrip("*- ").strip()
+            if len(line) >= 2 and line[0] == '"' and line[-1] == '"':
+                quoted_lines.append(line[1:-1].strip())
+        if quoted_lines:
+            return quoted_lines[-1]
+
+    filtered_lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lstrip("*- ").strip().lower()
+        if lowered.startswith((
+            "user says:",
+            "role:",
+            "task:",
+            "constraint:",
+            "friendly?",
+            "under 3 sentences?",
+            "focus on tourism?",
+        )):
+            continue
+        filtered_lines.append(line.lstrip("*- ").strip())
+
+    cleaned = " ".join(filtered_lines).strip() if filtered_lines else text
+    return cleaned.strip('"').strip()
+
+
 def try_ollama(prompt: str, image: str | None, max_tokens: int):
     base_url = os.environ.get("OLLAMA_BASE_URL")
     if not base_url:
         return None
 
+    user_prompt = build_user_prompt(prompt, bool(image))
     messages: list[dict] = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
     if image:
         messages.append({
             "role": "user",
             "content": [
-                {"type": "text", "text": prompt},
+                {"type": "text", "text": user_prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
             ],
         })
     else:
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": user_prompt})
 
     req = urllib.request.Request(
         f"{base_url}/v1/chat/completions",
@@ -113,7 +166,7 @@ def try_ollama(prompt: str, image: str | None, max_tokens: int):
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             answer = data.get("choices", [{}])[0].get("message", {}).get("content")
-            return {"answer": answer, "provider": "ollama"} if answer else None
+            return {"answer": clean_model_answer(answer), "provider": "ollama"} if answer else None
     except Exception as e:
         print(f"Ollama unavailable: {e}")
         return None
@@ -125,7 +178,7 @@ def try_google_ai(prompt: str, image: str | None, max_tokens: int):
         return None
 
     model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-    parts: list[dict] = [{"text": prompt}]
+    parts: list[dict] = [{"text": build_user_prompt(prompt, bool(image))}]
     if image:
         parts.append({
             "inline_data": {
@@ -157,7 +210,7 @@ def try_google_ai(prompt: str, image: str | None, max_tokens: int):
                 .get("parts", [{}])[0]
                 .get("text")
             )
-            return {"answer": answer, "provider": "google-ai-studio"} if answer else None
+            return {"answer": clean_model_answer(answer), "provider": "google-ai-studio"} if answer else None
     except urllib.error.HTTPError as e:
         print(f"Google AI error: {e.code} {e.read().decode('utf-8', errors='ignore')[:200]}")
         return None
