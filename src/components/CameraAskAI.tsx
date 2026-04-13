@@ -3,21 +3,47 @@ import { useNavigate } from 'react-router-dom'
 import { Map, MapPin, Mic, MicOff, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import RobotFace from './RobotFace'
-import RobotControls from './RobotControls'
 import EndTripButton from './EndTripButton'
 
+/* ── Types ─────────────────────────────────────────────── */
 type AssistantState = 'listening' | 'processing' | 'speaking' | 'error' | 'idle'
-type BrowserSpeechRecognition = {
+
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList
+  resultIndex: number
+}
+interface SpeechRecognitionErrorEvent {
+  error: string
+}
+interface SpeechRecognitionAlternative {
+  transcript: string
+  confidence: number
+}
+interface SpeechRecognitionResult {
+  0: SpeechRecognitionAlternative
+  isFinal: boolean
+}
+interface SpeechRecognitionResultList {
+  length: number
+  [index: number]: SpeechRecognitionResult
+}
+interface SpeechRecognitionInstance {
   continuous: boolean
   interimResults: boolean
   lang: string
-  onstart: (() => void) | null
-  onresult: ((event: any) => void) | null
-  onerror: ((event: any) => void) | null
+  maxAlternatives: number
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
   onend: (() => void) | null
   start: () => void
   stop: () => void
-  abort: () => void
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: new () => SpeechRecognitionInstance
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance
+  }
 }
 
 const PLANNER_STEPS = [
@@ -26,143 +52,81 @@ const PLANNER_STEPS = [
   'Get a personal itinerary.',
 ]
 
-const MIN_WORDS = 2
-const MIN_CHARS = 8
-const SNAPSHOT_TIMEOUT_MS = 2_000
-const ASK_TIMEOUT_MS = 20_000
-const STT_TARGET_SAMPLE_RATE = 16_000
-const MAX_RECORDING_MS = 12_000
-
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(input, { ...init, signal: controller.signal })
-  } finally {
-    window.clearTimeout(timeout)
-  }
+/* ── Helpers ───────────────────────────────────────────── */
+
+/** Capture a JPEG frame from a <video> element, return base64 (no prefix).
+ *  Applies scaleX(-1) to match the display correction for the hardware-mirrored webcam. */
+function snapFrame(video: HTMLVideoElement, quality = 0.85): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const ctx = canvas.getContext('2d')!
+  // Mirror the canvas draw to match display — Groq sees the correct orientation
+  ctx.translate(canvas.width, 0)
+  ctx.scale(-1, 1)
+  ctx.drawImage(video, 0, 0)
+  return canvas.toDataURL('image/jpeg', quality).split(',')[1]
 }
 
-function concatFloat32Chunks(chunks: Float32Array[]) {
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const merged = new Float32Array(totalLength)
-  let offset = 0
-  for (const chunk of chunks) {
-    merged.set(chunk, offset)
-    offset += chunk.length
+/** Pick the most natural-sounding English voice available. */
+function pickVoice(): SpeechSynthesisVoice | null {
+  const voices = speechSynthesis.getVoices()
+  const priorities: Array<(v: SpeechSynthesisVoice) => boolean> = [
+    // Windows 11 Neural / Natural voices — best quality on desktop
+    v => /Natural/i.test(v.name) && v.lang.startsWith('en'),
+    // Google UK English Female — high quality on Chrome/Chromium
+    v => v.name.includes('Google UK English Female'),
+    // Google US English — also good
+    v => v.name.includes('Google US English'),
+    // Any Google English voice
+    v => v.name.includes('Google') && v.lang.startsWith('en'),
+    // Microsoft online voices (better than local)
+    v => v.name.includes('Microsoft') && v.lang.startsWith('en') && !v.localService,
+    // Any remote/cloud English voice (usually better quality)
+    v => v.lang.startsWith('en') && !v.localService,
+    // Last resort: any English voice
+    v => v.lang.startsWith('en'),
+  ]
+  for (const test of priorities) {
+    const match = voices.find(test)
+    if (match) return match
   }
-  return merged
-}
-
-function downsampleTo16k(input: Float32Array, sourceRate: number, targetRate: number) {
-  if (sourceRate === targetRate) return input
-
-  const ratio = sourceRate / targetRate
-  const newLength = Math.round(input.length / ratio)
-  const output = new Float32Array(newLength)
-
-  let offsetResult = 0
-  let offsetBuffer = 0
-  while (offsetResult < output.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
-    let accum = 0
-    let count = 0
-
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i++) {
-      accum += input[i]
-      count++
-    }
-
-    output[offsetResult] = count > 0 ? accum / count : 0
-    offsetResult++
-    offsetBuffer = nextOffsetBuffer
-  }
-
-  return output
-}
-
-function encodeWavBase64(input: Float32Array, sourceRate: number, targetRate: number) {
-  const mono = downsampleTo16k(input, sourceRate, targetRate)
-  const buffer = new ArrayBuffer(44 + mono.length * 2)
-  const view = new DataView(buffer)
-
-  const writeString = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) {
-      view.setUint8(offset + i, value.charCodeAt(i))
-    }
-  }
-
-  writeString(0, 'RIFF')
-  view.setUint32(4, 36 + mono.length * 2, true)
-  writeString(8, 'WAVE')
-  writeString(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, targetRate, true)
-  view.setUint32(28, targetRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  writeString(36, 'data')
-  view.setUint32(40, mono.length * 2, true)
-
-  let offset = 44
-  for (let i = 0; i < mono.length; i++) {
-    const sample = Math.max(-1, Math.min(1, mono[i]))
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-    offset += 2
-  }
-
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  const chunkSize = 0x8000
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
-  }
-
-  return btoa(binary)
+  return null
 }
 
 export default function CameraAskAI() {
   const navigate = useNavigate()
 
+  /* ── Refs ── */
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const isSpeakingRef = useRef(false)
-  const processingRef = useRef(false)
-  const speechFallbackTimerRef = useRef<ReturnType<typeof setTimeout>>()
-  const recordTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const streamRef = useRef<MediaStream | null>(null)
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
-  const latestFrameRef = useRef<string | null>(null)
-  const browserVideoRef = useRef<HTMLVideoElement | null>(null)
-  const browserCameraStreamRef = useRef<MediaStream | null>(null)
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
-  const recognitionTranscriptRef = useRef('')
-  const autoListenEnabledRef = useRef(false)
-  const browserMediaReadyRef = useRef(false)
-  const restartRecognitionTimerRef = useRef<ReturnType<typeof setTimeout>>()
-  const audioStreamRef = useRef<MediaStream | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
-  const muteGainRef = useRef<GainNode | null>(null)
-  const audioChunksRef = useRef<Float32Array[]>([])
+  // Ref for cameraReady — lets async timers read the live value without stale closure
+  const cameraReadyRef = useRef(false)
 
+  /* ── State ── */
   const [entered, setEntered] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [cameraErrorDetail, setCameraErrorDetail] = useState<string | null>(null)
+  const [cameraRetry, setCameraRetry] = useState(0)
+  const [diagLog, setDiagLog] = useState<string[]>([])
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
-  const [speechHint, setSpeechHint] = useState('')
-  const [micEnabled, setMicEnabled] = useState(false)
-  const [feedSrc, setFeedSrc] = useState<string | null>(null)
+  const [micEnabled, setMicEnabled] = useState(true)
 
+  // Keep stateRef in sync so lock timer callback can read current state
   useEffect(() => { stateRef.current = state }, [state])
 
+  /* ── Fade-in from lock screen ── */
   useEffect(() => {
     const raf = requestAnimationFrame(() =>
       requestAnimationFrame(() => setEntered(true))
@@ -170,8 +134,10 @@ export default function CameraAskAI() {
     return () => cancelAnimationFrame(raf)
   }, [])
 
+  /* ── 45s inactivity lock — only ticks during true idle ── */
   const resetLockTimer = useCallback(() => {
     clearTimeout(lockTimerRef.current)
+    // Only start countdown when absolutely nothing is happening
     if (stateRef.current === 'idle') {
       lockTimerRef.current = setTimeout(() => {
         sessionStorage.setItem('lockReturnPath', '/dashboard')
@@ -180,10 +146,12 @@ export default function CameraAskAI() {
     }
   }, [navigate])
 
+  // Restart/clear timer whenever activity state changes
   useEffect(() => {
     resetLockTimer()
   }, [state, resetLockTimer])
 
+  // Also reset on any user interaction
   useEffect(() => {
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'] as const
     events.forEach(e => window.addEventListener(e, resetLockTimer, { passive: true }))
@@ -194,202 +162,269 @@ export default function CameraAskAI() {
     }
   }, [resetLockTimer])
 
-  const mjpegUrl = (window as any).__TRIAGE_CAMERA_URL
-    || import.meta.env.VITE_CAMERA_STREAM_URL
-    || null
-  const speechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  const preferBrowserMode = !mjpegUrl
-
+  /* ── Camera startup ── */
   useEffect(() => {
-    if (mjpegUrl) {
-      setFeedSrc(mjpegUrl)
-      setCameraReady(true)
-      latestFrameRef.current = '__mjpeg_stream__'
-      return
-    }
-
     let cancelled = false
-    let consecutiveErrors = 0
+    cameraReadyRef.current = false
+    setCameraError(null)
+    setCameraErrorDetail(null)
+    setCameraReady(false)
+    setDiagLog([])
 
-    const poll = async () => {
-      while (!cancelled) {
-        try {
-          const res = await fetch('/api/camera-feed')
-          if (res.status === 200) {
-            const data = await res.json()
-            if (data.image) {
-              const src = `data:image/jpeg;base64,${data.image}`
-              setFeedSrc(src)
-              latestFrameRef.current = data.image
-              if (!cameraReady) setCameraReady(true)
-              if (cameraError) setCameraError(null)
-              consecutiveErrors = 0
-            }
-          } else if (res.status === 204) {
-            if (!cameraReady && consecutiveErrors > 10) {
-              setCameraError('Waiting for camera feed from robot…')
-            }
-            consecutiveErrors++
-          }
-        } catch {
-          consecutiveErrors++
-          if (consecutiveErrors > 10 && !cameraError) {
-            setCameraError('Cannot reach camera feed')
-          }
+    const ts = () => new Date().toISOString().slice(11, 23)
+    const log = (msg: string) => setDiagLog(prev => [...prev, `[${ts()}] ${msg}`])
+
+    function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+      return Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            const e = new Error(label);(e as { name: string }).name = 'TimeoutError'; reject(e)
+          }, ms)
+        ),
+      ])
+    }
+
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+    let framePoller: ReturnType<typeof setInterval> | null = null
+
+    ;(async () => {
+      // ── 1. API check ───────────────────────────────────────────────────
+      log(`protocol: ${window.location.protocol}`)
+      log(`mediaDevices: ${!!navigator.mediaDevices}`)
+      log(`getUserMedia: ${typeof navigator.mediaDevices?.getUserMedia}`)
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        log('FAIL: Camera API not available')
+        if (!cancelled) {
+          setCameraError('Camera API not available')
+          setCameraErrorDetail(
+            window.location.protocol !== 'https:'
+              ? 'Page is not on HTTPS. Camera requires a secure connection.'
+              : 'navigator.mediaDevices is missing. Use Chromium or Firefox.'
+          )
         }
-        await new Promise(r => setTimeout(r, 200))
-      }
-    }
-
-    poll()
-    return () => { cancelled = true }
-  }, [mjpegUrl, cameraError, cameraReady])
-
-  const cleanupRecording = useCallback(async () => {
-    clearTimeout(recordTimeoutRef.current)
-    audioProcessorRef.current?.disconnect()
-    audioSourceRef.current?.disconnect()
-    muteGainRef.current?.disconnect()
-    audioStreamRef.current?.getTracks().forEach(track => track.stop())
-
-    audioProcessorRef.current = null
-    audioSourceRef.current = null
-    muteGainRef.current = null
-    audioStreamRef.current = null
-    audioChunksRef.current = []
-
-    if (audioContextRef.current) {
-      await audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-  }, [])
-
-  const captureBrowserFrame = useCallback(() => {
-    const video = browserVideoRef.current
-    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0) {
-      return null
-    }
-
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    const context = canvas.getContext('2d')
-    if (!context) {
-      return null
-    }
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
-    return dataUrl.split(',')[1] || null
-  }, [])
-
-  const speak = useCallback(async (text: string) => {
-    clearTimeout(speechFallbackTimerRef.current)
-    setSpeechHint('')
-
-    const finishSpeaking = () => {
-      clearTimeout(speechFallbackTimerRef.current)
-      isSpeakingRef.current = false
-      setState('idle')
-    }
-    isSpeakingRef.current = true
-    setState('speaking')
-
-    const estimatedMs = Math.min(12_000, Math.max(4_000, text.split(/\s+/).length * 450))
-    speechFallbackTimerRef.current = setTimeout(() => {
-      finishSpeaking()
-    }, estimatedMs)
-
-    try {
-      if (preferBrowserMode && 'speechSynthesis' in window) {
-        const voices = window.speechSynthesis.getVoices()
-        const utterance = new SpeechSynthesisUtterance(text)
-        const preferredVoice = voices.find(voice => voice.lang.toLowerCase().startsWith('en')) || voices[0]
-
-      if (preferredVoice) {
-          utterance.voice = preferredVoice
-          utterance.lang = preferredVoice.lang
-        } else {
-          utterance.lang = 'en-US'
-        }
-
-        await new Promise<void>((resolve, reject) => {
-          let settled = false
-          utterance.onend = () => {
-            if (!settled) {
-              settled = true
-              resolve()
-            }
-          }
-          utterance.onerror = (event: any) => {
-            if (!settled) {
-              settled = true
-              reject(new Error(event?.error || 'speech synthesis failed'))
-            }
-          }
-
-          window.speechSynthesis.cancel()
-          window.speechSynthesis.speak(utterance)
-        })
-
         return
       }
 
-      const res = await fetchWithTimeout('/api/speak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      }, 35_000)
-
-      if (!res.ok) {
-        const errText = await res.text()
-        throw new Error(errText || `TTS error ${res.status}`)
+      // ── 2. Enumerate devices (3s timeout — can hang on Pi) ─────────────
+      let videoDeviceCount = 0
+      log('calling enumerateDevices...')
+      try {
+        const devices = await withTimeout(
+          navigator.mediaDevices.enumerateDevices(),
+          3_000,
+          'enumerateDevices timed out'
+        )
+        const videoDevs = devices.filter(d => d.kind === 'videoinput')
+        videoDeviceCount = videoDevs.length
+        log(`enumerateDevices OK: ${devices.length} total, ${videoDeviceCount} videoinput`)
+        videoDevs.forEach((d, i) => log(`  cam[${i}]: ${d.label || '(no label)'} id=${d.deviceId.slice(0,8)}`))
+      } catch (e) {
+        log(`enumerateDevices FAILED: ${(e as Error).name} — ${(e as Error).message} (skipping, continuing to getUserMedia)`)
       }
+      if (cancelled) return
 
-      const data = await res.json()
-      if (data?.played === false) {
-        setSpeechHint('Answer ready. Connect a speaker to hear playback.')
-      }
-    } finally {
-      finishSpeaking()
-      if (preferBrowserMode && autoListenEnabledRef.current) {
-        restartBrowserRecognition(800)
-      }
-    }
-  }, [preferBrowserMode, restartBrowserRecognition])
 
-  const askAI = useCallback(async (prompt: string) => {
-    processingRef.current = true
-    setState('processing')
+      // ── 3. getUserMedia with 10s timeout ────────────────────────────
+      const attempts: MediaStreamConstraints[] = [
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+        { video: true, audio: false },
+      ]
+      let stream: MediaStream | null = null
+      let lastError: unknown = null
 
-    try {
-      let image: string | null = preferBrowserMode ? captureBrowserFrame() : latestFrameRef.current
-      if (image === '__mjpeg_stream__' && mjpegUrl) {
+      for (let i = 0; i < attempts.length; i++) {
+        if (cancelled) break
+        log(`getUserMedia attempt ${i + 1}/${attempts.length}...`)
         try {
-          const snapUrl = mjpegUrl.replace('/stream', '/frame')
-          const snapRes = await fetchWithTimeout(snapUrl, {}, SNAPSHOT_TIMEOUT_MS)
-          if (snapRes.ok) {
-            const blob = await snapRes.blob()
-            const reader = new FileReader()
-            image = await new Promise((resolve) => {
-              reader.onloadend = () => {
-                const result = reader.result as string
-                resolve(result.split(',')[1] || null)
-              }
-              reader.readAsDataURL(blob)
-            })
-          }
-        } catch {
-          image = null
+          stream = await withTimeout(navigator.mediaDevices.getUserMedia(attempts[i]), 10_000, 'timeout')
+          log(`getUserMedia attempt ${i + 1}: SUCCESS`)
+          break
+        } catch (err) {
+          lastError = err
+          const e = err as { name?: string; message?: string }
+          log(`getUserMedia attempt ${i + 1}: FAIL name=${e.name} msg=${e.message}`)
+          if (e.name === 'TimeoutError') break
         }
       }
 
-      const res = await fetchWithTimeout('/api/ask', {
+      if (cancelled) { stream?.getTracks().forEach(t => t.stop()); return }
+
+      // ── 4. Handle getUserMedia failure ─────────────────────────────
+      if (!stream) {
+        const err = lastError as { name?: string; message?: string } | null
+        const name = err?.name ?? ''
+        let summary = 'Camera error'
+        let detail = err?.message ?? 'Unknown error'
+
+        if (name === 'TimeoutError') {
+          summary = 'Chromium camera blocked (xdg-portal missing)'
+          detail =
+            'Both enumerateDevices and getUserMedia hung — this confirms xdg-desktop-portal is not installed on your Raspberry Pi OS.\n\n' +
+            '── PERMANENT FIX (run on Pi terminal) ──\n' +
+            '  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk\n' +
+            '  sudo reboot\n\n' +
+            '── FAST WORKAROUND (right now) ──\n' +
+            'Open this site in Firefox instead of Chromium.\n' +
+            'Firefox uses V4L2 directly and does NOT need xdg-portal.\n\n' +
+            'In Firefox: click the camera icon in the address bar → Allow when prompted.'
+
+        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          summary = 'No camera found'
+          detail = videoDeviceCount === 0
+            ? 'The browser sees 0 video devices.\n\nFix on Raspberry Pi OS:' +
+              '\n  sudo usermod -aG video $USER' +
+              '\n  sudo reboot' +
+              '\n\nThen check: ls -la /dev/video*'
+            : `Browser detected ${videoDeviceCount} device(s) but couldn\'t open it. Unplug and replug the webcam, then tap Retry.`
+        } else if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          summary = 'Camera permission denied'
+          detail =
+            'The browser has blocked camera access for this site.\n\n' +
+            'In Chromium: click the camera icon in the address bar → Allow, then tap Retry.\n\n' +
+            'In Firefox: click the padlock icon → Connection secure → More information → Permissions → set Camera to Allow.\n\n' +
+            'If no icon appears, go to browser Settings → Privacy → Camera permissions and remove the block for this site.'
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          summary = 'Camera already in use'
+          detail = 'Another application has the webcam open. Close it (e.g. fswebcam, cheese, v4l2-ctl), then tap Retry.'
+        } else if (name === 'OverconstrainedError') {
+          summary = 'Camera constraints rejected'
+          detail = 'Tap Retry — it will request the camera with no constraints.'
+        }
+
+        if (!cancelled) { setCameraError(summary); setCameraErrorDetail(detail) }
+        log(`FAIL: ${summary} — ${detail.split('\n')[0]}`)
+        return
+      }
+
+      // ── 5. Check stream has video tracks ─────────────────────────────
+      const vTracks = stream.getVideoTracks()
+      log(`stream tracks: ${stream.getTracks().length} total, ${vTracks.length} video`)
+      vTracks.forEach((t, i) => log(`  track[${i}]: ${t.label} readyState=${t.readyState}`))
+      if (vTracks.length === 0) {
+        stream.getTracks().forEach(t => t.stop())
+        if (!cancelled) {
+          setCameraError('No video in stream')
+          setCameraErrorDetail('getUserMedia returned a stream with no video tracks. Unplug and replug the webcam then tap Retry.')
+        }
+        log('FAIL: no video tracks in stream')
+        return
+      }
+
+      streamRef.current = stream
+      log('stream assigned to video element, polling for frames...')
+
+      // ── 6. Feed stream to video element ────────────────────────────
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play().catch(e => log(`play() error: ${(e as Error).message}`))
+
+        let pollCount = 0
+        framePoller = setInterval(() => {
+          if (cancelled) { clearInterval(framePoller!); return }
+          const vid = videoRef.current
+          pollCount++
+          if (pollCount % 10 === 0) {
+            log(`poll ${pollCount}: videoWidth=${vid?.videoWidth ?? 'N/A'} videoHeight=${vid?.videoHeight ?? 'N/A'} readyState=${vid?.readyState ?? 'N/A'}`)
+          }
+          if (vid && vid.videoWidth > 0 && vid.videoHeight > 0) {
+            clearInterval(framePoller!)
+            framePoller = null
+            if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = null }
+            log(`OK: first frame ${vid.videoWidth}x${vid.videoHeight} after ${pollCount * 200}ms`)
+            cameraReadyRef.current = true
+            setCameraReady(true)
+          }
+        }, 200)
+
+        watchdogTimer = setTimeout(() => {
+          if (framePoller) { clearInterval(framePoller); framePoller = null }
+          if (!cancelled && !cameraReadyRef.current) {
+            const vid = videoRef.current
+            log(`WATCHDOG fired: videoWidth=${vid?.videoWidth} videoHeight=${vid?.videoHeight} readyState=${vid?.readyState}`)
+            stream?.getTracks().forEach(t => { log(`  stopping track: ${t.label} state=${t.readyState}`); t.stop() })
+            setCameraError('Camera opened but sent no frames')
+            setCameraErrorDetail(
+              'The webcam connected but produced no video data in 8 seconds.\n\n' +
+              'Most likely fix on Raspberry Pi OS (Bookworm):' +
+              '\n  sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk' +
+              '\n  sudo reboot' +
+              '\n\nThis installs the camera portal that Chromium on Pi OS requires.' +
+              '\n\nAlso check your webcam video format:' +
+              '\n  v4l2-ctl --list-formats-ext' +
+              '\nIf only MJPG is listed and no YUYV, try a different webcam.'
+            )
+          }
+        }, 8_000)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (watchdogTimer) clearTimeout(watchdogTimer)
+      if (framePoller) clearInterval(framePoller)
+      streamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  }, [cameraRetry])
+
+  /* ── TTS ── */
+  const speak = useCallback((text: string) => {
+    speechSynthesis.cancel()
+
+    // Stop recognition while speaking to prevent echo
+    try { recognitionRef.current?.stop() } catch { /* ok */ }
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.95
+    utterance.pitch = 1.0
+
+    const voice = pickVoice()
+    if (voice) utterance.voice = voice
+
+    utterance.onstart = () => {
+      isSpeakingRef.current = true
+      setState('speaking')
+    }
+    utterance.onend = () => {
+      isSpeakingRef.current = false
+      setState('listening')
+      // Restart recognition after a short gap so mic doesn't catch tail-end audio
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.start() } catch { /* already running */ }
+        }
+      }, 400)
+    }
+    utterance.onerror = () => {
+      isSpeakingRef.current = false
+      setState('listening')
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.start() } catch { /* already running */ }
+        }
+      }, 400)
+    }
+
+    speechSynthesis.speak(utterance)
+  }, [])
+
+  /* ── Ask Groq ── */
+  const askGroq = useCallback(async (prompt: string) => {
+    setState('processing')
+    setTranscript('')
+
+    try {
+      let image: string | null = null
+      if (videoRef.current && videoRef.current.readyState >= 2) {
+        image = snapFrame(videoRef.current)
+      }
+
+      const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image, prompt }),
-      }, ASK_TIMEOUT_MS)
+      })
 
       if (!res.ok) {
         const errText = await res.text()
@@ -398,377 +433,171 @@ export default function CameraAskAI() {
 
       const data = await res.json()
       const answer = data.answer || 'Sorry, I could not understand that.'
+
       setLastAnswer(answer)
-      try {
-        await speak(answer)
-      } catch (error) {
-        console.error('TTS error:', error)
-        setSpeechHint(`Speech unavailable: ${getErrorMessage(error)}`)
-      }
+      speak(answer)
     } catch (error: unknown) {
-      console.error('AI error:', error)
+      console.error('Groq error:', error)
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
-      setState('idle')
-    } finally {
-      processingRef.current = false
+      setState('listening')
     }
-  }, [captureBrowserFrame, mjpegUrl, preferBrowserMode, speak])
+  }, [speak])
 
-  const restartBrowserRecognition = useCallback((delayMs = 500) => {
-    clearTimeout(restartRecognitionTimerRef.current)
-    if (!preferBrowserMode || !autoListenEnabledRef.current || !browserMediaReadyRef.current) {
-      return
-    }
-
-    restartRecognitionTimerRef.current = setTimeout(() => {
-      if (recognitionRef.current || processingRef.current || isSpeakingRef.current) {
-        return
-      }
-
-      try {
-        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-        if (!RecognitionCtor) {
-          return
-        }
-
-        const recognition = new RecognitionCtor() as BrowserSpeechRecognition
-        recognition.continuous = true
-        recognition.interimResults = true
-        recognition.lang = 'en-US'
-        recognitionTranscriptRef.current = ''
-
-        recognition.onstart = () => {
-          setMicEnabled(true)
-          setState('listening')
-          setSpeechHint('')
-        }
-
-        recognition.onresult = (event: any) => {
-          let interimText = ''
-          let finalText = ''
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i]
-            const text = result[0]?.transcript?.trim?.() || ''
-            if (!text) continue
-
-            if (result.isFinal) {
-              finalText = `${finalText} ${text}`.trim()
-            } else {
-              interimText = `${interimText} ${text}`.trim()
-            }
-          }
-
-          if (interimText) {
-            setTranscript(interimText)
-          }
-
-          if (finalText && !processingRef.current && !isSpeakingRef.current) {
-            recognitionTranscriptRef.current = finalText
-            setTranscript(finalText)
-            recognition.stop()
-          }
-        }
-
-        recognition.onerror = (event: any) => {
-          console.error('Speech recognition error:', event)
-          const errorCode = event?.error || 'speech recognition failed'
-
-          if (errorCode === 'no-speech') {
-            setTranscript('')
-            setState('listening')
-            return
-          }
-
-          if (errorCode === 'audio-capture') {
-            setSpeechHint('Chrome could not open the microphone. Check the site mic permission and Windows input device, then retry.')
-          } else {
-            setSpeechHint(`Speech recognition issue: ${errorCode}`)
-          }
-        }
-
-        recognition.onend = () => {
-          const finalText = recognitionTranscriptRef.current.trim()
-          recognitionRef.current = null
-
-          if (finalText && !processingRef.current && !isSpeakingRef.current) {
-            recognitionTranscriptRef.current = ''
-            void askAI(finalText).finally(() => {
-              restartBrowserRecognition(800)
-            })
-            return
-          }
-
-          if (autoListenEnabledRef.current && !processingRef.current && !isSpeakingRef.current) {
-            restartBrowserRecognition(800)
-          } else {
-            setMicEnabled(false)
-            if (!lastAnswer) {
-              setState('idle')
-            }
-          }
-        }
-
-        recognitionRef.current = recognition
-        recognition.start()
-      } catch (error) {
-        console.error('Browser speech start failed:', error)
-        setSpeechHint(`Speech recognition unavailable: ${getErrorMessage(error)}`)
-        setState('error')
-      }
-    }, delayMs)
-  }, [askAI, lastAnswer, preferBrowserMode])
-
-  const cleanupRecognition = useCallback(() => {
-    clearTimeout(restartRecognitionTimerRef.current)
-    recognitionRef.current?.abort()
-    recognitionRef.current = null
-    recognitionTranscriptRef.current = ''
-  }, [])
-
-  const transcribeCapturedAudio = useCallback(async () => {
-    const context = audioContextRef.current
-    const chunks = audioChunksRef.current
-    if (!context || chunks.length === 0) {
-      setState('idle')
-      setMicEnabled(false)
-      return
-    }
-
-    const merged = concatFloat32Chunks(chunks)
-    const wavAudio = encodeWavBase64(merged, context.sampleRate, STT_TARGET_SAMPLE_RATE)
-
-    setState('processing')
-    const res = await fetchWithTimeout('/api/stt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio: wavAudio }),
-    }, 120_000)
-
-    if (!res.ok) {
-      const errText = await res.text()
-      throw new Error(errText || `STT error ${res.status}`)
-    }
-
-    const data = await res.json()
-    const text = (data.text as string | undefined)?.trim() || ''
-    if (!text || text.length < MIN_CHARS || text.split(/\s+/).filter(Boolean).length < MIN_WORDS) {
-      setTranscript('')
-      setState('idle')
-      setMicEnabled(false)
-      return
-    }
-
-    setTranscript(text)
-    setMicEnabled(false)
-    await askAI(text)
-  }, [askAI])
-
-  const stopBrowserCapture = useCallback(async () => {
-    try {
-      await transcribeCapturedAudio()
-    } finally {
-      await cleanupRecording()
-    }
-  }, [cleanupRecording, transcribeCapturedAudio])
-
-  const startBrowserCapture = useCallback(async () => {
-    if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
-      throw new Error('Browser microphone capture is not supported here.')
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    })
-
-    const context = new window.AudioContext()
-    await context.resume()
-
-    const source = context.createMediaStreamSource(stream)
-    const processor = context.createScriptProcessor(4096, 1, 1)
-    const muteGain = context.createGain()
-    muteGain.gain.value = 0
-
-    audioStreamRef.current = stream
-    audioContextRef.current = context
-    audioSourceRef.current = source
-    audioProcessorRef.current = processor
-    muteGainRef.current = muteGain
-    audioChunksRef.current = []
-
-    processor.onaudioprocess = event => {
-      const input = event.inputBuffer.getChannelData(0)
-      audioChunksRef.current.push(new Float32Array(input))
-    }
-
-    source.connect(processor)
-    processor.connect(muteGain)
-    muteGain.connect(context.destination)
-
-    setTranscript('')
-    setLastAnswer('')
-    setSpeechHint('')
-    setState('listening')
-    setMicEnabled(true)
-
-    recordTimeoutRef.current = setTimeout(() => {
-      void stopBrowserCapture()
-    }, MAX_RECORDING_MS)
-  }, [stopBrowserCapture])
-
-  const toggleMicCapture = useCallback(async () => {
-    if (processingRef.current || isSpeakingRef.current) return
-
-    if (preferBrowserMode && speechRecognitionCtor) {
-      if (micEnabled) {
-        autoListenEnabledRef.current = false
-        cleanupRecognition()
-        setMicEnabled(false)
-        setState(lastAnswer ? 'idle' : 'idle')
-        setSpeechHint('Hands-free listening paused.')
-        return
-      }
-
-      try {
-        autoListenEnabledRef.current = true
-        setTranscript('')
-        setLastAnswer('')
-        setSpeechHint('')
-        restartBrowserRecognition(0)
-      } catch (error) {
-        console.error('Browser speech start failed:', error)
-        setLastAnswer(`Error: ${getErrorMessage(error)}`)
-        setState('error')
-        setMicEnabled(false)
-      }
-      return
-    }
-
-    if (micEnabled) {
-      try {
-        await stopBrowserCapture()
-      } catch (error) {
-        console.error('Browser STT stop failed:', error)
-        setLastAnswer(`Error: ${getErrorMessage(error)}`)
-        setState('error')
-        setMicEnabled(false)
-      }
-      return
-    }
-
-    try {
-      await cleanupRecording()
-      await startBrowserCapture()
-    } catch (error) {
-      console.error('Browser STT start failed:', error)
-      setLastAnswer(`Error: ${getErrorMessage(error)}`)
-      setState('error')
-      setMicEnabled(false)
-      await cleanupRecording()
-    }
-  }, [cleanupRecognition, cleanupRecording, lastAnswer, micEnabled, preferBrowserMode, restartBrowserRecognition, speechRecognitionCtor, startBrowserCapture, stopBrowserCapture])
-
-  useEffect(() => () => {
-    clearTimeout(speechFallbackTimerRef.current)
-    cleanupRecognition()
-    browserCameraStreamRef.current?.getTracks().forEach(track => track.stop())
-    browserCameraStreamRef.current = null
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
-    }
-    void cleanupRecording()
-  }, [cleanupRecognition, cleanupRecording])
-
+  /* ── Speech Recognition ── */
   useEffect(() => {
-    if (!preferBrowserMode || !navigator.mediaDevices?.getUserMedia) {
+    if (!micEnabled) {
+      recognitionRef.current?.stop()
+      setState('idle')
       return
     }
 
-    let cancelled = false
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setCameraError('Speech recognition is not supported in this browser.')
+      return
+    }
 
-    const initializeBrowserMedia = async () => {
-      try {
-        setCameraError(null)
-        setSpeechHint('Chrome will ask for camera and microphone access once.')
+    const recognition = new SpeechRecognition()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+    recognition.maxAlternatives = 1
+    recognitionRef.current = recognition
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-          },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        })
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null
+    let accumulated = ''                // buffer for final fragments
+    let lastInterim = ''                // fallback if isFinal never fires
+    let processingLock = false           // prevent double-sends
+    const SILENCE_MS = 1800             // 1.8s silence → utterance is done
+    const MIN_WORDS = 2
+    const MIN_CHARS = 8
+    const CONFIDENCE_FLOOR = 0.2        // low threshold — let most speech through
 
-        if (cancelled) {
-          stream.getTracks().forEach(track => track.stop())
-          return
+    /** Flush the buffer: if it looks like a real question, send to Groq. */
+    const flush = () => {
+      if (processingLock || isSpeakingRef.current) return
+      let text = accumulated.trim()
+      if (!text && lastInterim.trim()) text = lastInterim.trim()
+      accumulated = ''
+      lastInterim = ''
+      if (!text) return
+
+      const words = text.split(/\s+/).length
+      if (words < MIN_WORDS || text.length < MIN_CHARS) {
+        setTranscript('')
+        return
+      }
+      processingLock = true
+      askGroq(text).finally(() => { processingLock = false })
+    }
+
+    const clearSilenceTimer = () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
+    }
+    const resetSilenceTimer = (ms: number) => {
+      clearSilenceTimer()
+      silenceTimer = setTimeout(flush, ms)
+    }
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      if (isSpeakingRef.current || processingLock) return
+
+      let interim = ''
+      let newFinal = ''
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const r = event.results[i]
+        if (r.isFinal) {
+          if (r[0].confidence > CONFIDENCE_FLOOR) newFinal += r[0].transcript
+        } else {
+          interim += r[0].transcript
         }
+      }
 
-        browserMediaReadyRef.current = true
-        browserCameraStreamRef.current = stream
-        if (browserVideoRef.current) {
-          browserVideoRef.current.srcObject = stream
-          await browserVideoRef.current.play().catch(() => undefined)
-        }
+      if (newFinal) {
+        accumulated += newFinal
+        lastInterim = ''
+        setTranscript(accumulated)
+        resetSilenceTimer(1200)
+      }
 
-        setFeedSrc(null)
-        setCameraReady(true)
-        setCameraError(null)
-        setSpeechHint('Hands-free listening is on.')
-        autoListenEnabledRef.current = true
-        restartBrowserRecognition(300)
-      } catch (error) {
-        console.error('Browser media init failed:', error)
-        browserMediaReadyRef.current = false
-        setCameraReady(false)
-        setMicEnabled(false)
-        setCameraError(`Chrome could not access camera or microphone: ${getErrorMessage(error)}`)
-        setSpeechHint('Check the site permissions in Chrome and allow camera + microphone for localhost.')
-        setState('error')
+      if (interim) {
+        lastInterim = interim
+        setTranscript(accumulated ? accumulated + ' ' + interim : interim)
+        resetSilenceTimer(SILENCE_MS)
       }
     }
 
-    void initializeBrowserMedia()
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (event.error === 'no-speech' || event.error === 'aborted') return
+      console.warn('Speech recognition error:', event.error)
+    }
+
+    recognition.onend = () => {
+      // Flush remaining text only if not already processing/speaking
+      if (accumulated.trim() && !processingLock && !isSpeakingRef.current) {
+        clearSilenceTimer()
+        flush()
+      } else {
+        accumulated = ''
+        lastInterim = ''
+      }
+
+      // Auto-restart unless mic is disabled or we're speaking
+      if (micEnabled && !isSpeakingRef.current) {
+        try { recognition.start() } catch { /* already started */ }
+      }
+    }
+
+    try {
+      recognition.start()
+      setState('listening')
+    } catch (err) {
+      console.warn('Could not start speech recognition:', err)
+    }
 
     return () => {
-      cancelled = true
+      clearSilenceTimer()
+      recognition.onend = null
+      recognition.stop()
     }
-  }, [preferBrowserMode, restartBrowserRecognition])
+  }, [micEnabled, askGroq])
 
+  /* ── Ensure voices are loaded ── */
+  useEffect(() => {
+    speechSynthesis.getVoices()
+    speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
+  }, [])
+
+  /* ── Status badge text ── */
   const statusText = (() => {
     switch (state) {
-      case 'listening': return '🎙️ Recording…'
+      case 'listening': return '🎙️ Listening…'
       case 'processing': return '🧠 Thinking…'
       case 'speaking': return '🔊 Speaking…'
       case 'error': return '⚠️ Error'
-      default: return lastAnswer ? '✅ Answer ready' : preferBrowserMode ? '🎧 Hands-free' : '⏸ Paused'
+      default: return '⏸ Paused'
     }
   })()
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#f4fbfe]">
+      {/* ── Blue fade-in overlay ────── */}
       <div
         className="pointer-events-none fixed inset-0 z-50 bg-[#20a7db]"
         style={{ opacity: entered ? 0 : 1, transition: 'opacity 800ms cubic-bezier(0.4,0,0.2,1)' }}
       />
 
-      <header className="shrink-0 bg-[#20a7db]">
-        <div className="mx-auto flex w-full items-center gap-2 px-3 py-1.5">
-          <div className="shrink-0 flex items-center justify-center">
-            <RobotFace mini />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xs font-semibold leading-tight tracking-tight text-white">Triage</h1>
-            <p className="text-[10px] leading-tight text-white/70">Voice-activated tour guide</p>
-          </div>
+      {/* ── Header ── */}
+        <header className="shrink-0 bg-[#20a7db]">
+          <div className="mx-auto flex w-full items-center gap-2 px-3 py-1.5">
+            <div className="shrink-0 flex items-center justify-center">
+              <RobotFace mini />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xs font-semibold leading-tight tracking-tight text-white">Triage</h1>
+              <p className="text-[10px] leading-tight text-white/70">Voice-activated tour guide</p>
+            </div>
           <div className="ml-auto shrink-0 rounded-full bg-white/[0.12] px-2 py-0.5 text-[10px] font-medium text-white/80 ring-1 ring-white/[0.15]">
             {statusText}
           </div>
@@ -776,8 +605,11 @@ export default function CameraAskAI() {
         </div>
       </header>
 
+      {/* ── Main ── */}
       <main className="flex w-full flex-1 min-h-0 gap-3 p-2.5">
+        {/* Camera section — takes all available space */}
         <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-[#20a7db]/[0.12] bg-white p-3 shadow-[0_20px_48px_rgba(32,167,219,0.07)]">
+          {/* Header row */}
           <div className="flex shrink-0 items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#20a7db]">
@@ -787,19 +619,11 @@ export default function CameraAskAI() {
                 Ask me anything about what you see
               </h2>
             </div>
+            {/* Nav buttons */}
             <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#20a7db]/[0.12] bg-[#f4fbfe] p-1">
               <Button
-                onClick={() => void toggleMicCapture()}
+                onClick={() => setMicEnabled(!micEnabled)}
                 size="lg"
-                title={
-                  preferBrowserMode
-                    ? micEnabled
-                      ? 'Pause hands-free listening'
-                      : 'Resume hands-free listening'
-                    : micEnabled
-                      ? 'Stop recording and transcribe'
-                      : 'Start browser microphone recording'
-                }
                 className={`h-9 w-9 rounded-full p-0 shadow-sm ${
                   micEnabled
                     ? 'bg-[#20a7db] shadow-[#20a7db]/25 hover:bg-[#1b96c5]'
@@ -827,63 +651,78 @@ export default function CameraAskAI() {
             </div>
           </div>
 
+          {/* Live camera viewport */}
           <div className="relative mt-2 min-h-0 flex-1 overflow-hidden rounded-xl border border-[#20a7db]/[0.12] bg-black">
+            {/* Corner brackets */}
             <div className="pointer-events-none absolute left-2 top-2 h-5 w-5 rounded-tl-lg border-l-2 border-t-2 border-white/40 z-10" />
             <div className="pointer-events-none absolute right-2 top-2 h-5 w-5 rounded-tr-lg border-r-2 border-t-2 border-white/40 z-10" />
             <div className="pointer-events-none absolute bottom-2 left-2 h-5 w-5 rounded-bl-lg border-b-2 border-l-2 border-white/40 z-10" />
             <div className="pointer-events-none absolute bottom-2 right-2 h-5 w-5 rounded-br-lg border-b-2 border-r-2 border-white/40 z-10" />
 
+            {/* Status badge */}
             <div className="absolute left-2 top-2 z-20 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur-sm">
               {cameraReady ? 'Live' : cameraError ? 'Error' : 'Starting…'}
             </div>
 
-            {preferBrowserMode ? (
-              <>
-                <video
-                  ref={browserVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-                {!cameraReady && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    {cameraError ? (
-                      <div className="text-center px-4">
-                        <span className="text-lg">📷</span>
-                        <p className="mt-2 text-xs font-medium text-white/70">{cameraError}</p>
-                      </div>
-                    ) : (
-                      <div className="text-center">
-                        <Loader2 className="mx-auto h-6 w-6 animate-spin text-[#20a7db]/60" />
-                        <p className="mt-2 text-[10px] text-white/50">Connecting to webcam…</p>
-                      </div>
+            {/* Video element — CSS scaleX(-1) corrects the hardware-mirrored webcam feed */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ transform: 'scaleX(-1)' }}
+            />
+
+            {/* Camera error overlay + diagnostic log */}
+            {(cameraError || (!cameraReady && diagLog.length > 0)) && (
+              <div className="absolute inset-0 flex flex-col bg-slate-900/97 z-30 p-3 overflow-hidden">
+
+                {/* Diagnostic log — always visible */}
+                <div className="flex-1 overflow-y-auto mb-3 rounded-lg bg-black/40 p-2 font-mono">
+                  <p className="text-[9px] font-semibold text-[#20a7db] uppercase tracking-wider mb-1">Camera diagnostics</p>
+                  {diagLog.map((line, i) => (
+                    <p key={i} className={`text-[10px] leading-4 whitespace-pre-wrap break-all ${
+                      line.includes('FAIL') || line.includes('WATCHDOG') ? 'text-red-400' :
+                      line.includes('OK:') || line.includes('SUCCESS') ? 'text-green-400' :
+                      line.includes('poll') ? 'text-slate-500' : 'text-slate-300'
+                    }`}>{line}</p>
+                  ))}
+                  {!cameraError && !cameraReady && (
+                    <p className="text-[10px] text-yellow-400 animate-pulse">⏳ waiting...</p>
+                  )}
+                </div>
+
+                {/* Error summary — only when failed */}
+                {cameraError && (
+                  <div className="shrink-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">📷</span>
+                      <p className="text-sm font-bold text-white">{cameraError}</p>
+                    </div>
+                    {cameraErrorDetail && (
+                      <p className="text-[11px] text-white/70 leading-5 mb-3 whitespace-pre-line">{cameraErrorDetail}</p>
                     )}
-                  </div>
-                )}
-              </>
-            ) : feedSrc ? (
-              <img
-                src={feedSrc}
-                alt="Robot camera"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center">
-                {cameraError ? (
-                  <div className="text-center px-4">
-                    <span className="text-lg">📷</span>
-                    <p className="mt-2 text-xs font-medium text-white/70">{cameraError}</p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-[#20a7db]/60" />
-                    <p className="mt-2 text-[10px] text-white/50">Connecting to camera…</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setCameraRetry(r => r + 1)}
+                        className="flex-1 rounded-xl bg-[#20a7db] py-2 text-xs font-semibold text-white hover:bg-[#1b96c5] transition-colors"
+                      >
+                        🔄 Retry
+                      </button>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(diagLog.join('\n')).catch(() => {})}
+                        className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70 hover:text-white transition-colors"
+                      >
+                        📋 Copy log
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
             )}
 
+            {/* Processing overlay */}
             {state === 'processing' && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-sm">
                 <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
@@ -893,6 +732,7 @@ export default function CameraAskAI() {
               </div>
             )}
 
+            {/* Transcript overlay — bottom of video */}
             {transcript && state !== 'idle' && (
               <div className="absolute bottom-3 left-3 right-3 z-20">
                 <div className="rounded-xl bg-black/60 px-3 py-2 backdrop-blur-sm">
@@ -906,55 +746,51 @@ export default function CameraAskAI() {
             )}
           </div>
 
+          {/* Subtitle bar */}
           <div className="mt-2 shrink-0 rounded-xl bg-slate-900/85 px-4 py-2 backdrop-blur-sm">
             <p className="text-center text-xs leading-5 text-white/90">
-              {state === 'processing'
+              {state === 'speaking' && lastAnswer
+                ? lastAnswer
+                : state === 'processing'
                   ? 'Thinking\u2026'
                   : lastAnswer && lastAnswer.startsWith('Error:')
                     ? lastAnswer
-                    : lastAnswer
-                      ? speechHint
-                        ? `${lastAnswer} ${speechHint}`
-                        : lastAnswer
                     : transcript && state === 'listening'
                       ? transcript
-                      : preferBrowserMode
-                        ? micEnabled
-                          ? 'Hands-free listening is active. Just talk naturally.'
-                          : 'Hands-free listening is paused. Tap the mic to resume.'
-                        : micEnabled
-                          ? 'Recording from Chromium microphone\u2026 tap the mic again to send'
-                          : 'Tap the mic to speak'}
+                      : micEnabled
+                        ? 'Ask me anything about what you see\u2026'
+                        : 'Microphone paused'}
             </p>
           </div>
         </section>
 
-        <aside className="flex w-[188px] shrink-0 flex-col gap-3 rounded-2xl border border-[#20a7db]/[0.12] bg-[#eff9fd] p-3 shadow-sm">
-          <RobotControls />
+        {/* Right sidebar */}
+        <aside className="flex w-[188px] shrink-0 flex-col rounded-2xl border border-[#20a7db]/[0.12] bg-[#eff9fd] p-3 shadow-sm">
+          <h3 className="text-sm font-semibold tracking-tight text-slate-900">
+            Itinerary planner
+          </h3>
+          <p className="mt-1 text-xs leading-4 text-slate-600">
+            Plan a city trip in Albania by answering a few quick questions.
+          </p>
 
-          <div className="mt-auto">
-            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Itinerary planner
-            </h3>
-            <div className="mt-1.5 space-y-1.5">
-              {PLANNER_STEPS.map((item, i) => (
-                <div key={item} className="flex items-start gap-1.5">
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-[#20a7db]">
-                    {i + 1}
-                  </span>
-                  <p className="text-[10px] leading-4 text-slate-600">{item}</p>
-                </div>
-              ))}
-            </div>
+          <div className="mt-3 space-y-2">
+            {PLANNER_STEPS.map((item, i) => (
+              <div key={item} className="flex items-start gap-2">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-[#20a7db]">
+                  {i + 1}
+                </span>
+                <p className="text-xs leading-4 text-slate-600">{item}</p>
+              </div>
+            ))}
+          </div>
 
-            <div className="mt-2 grid gap-1.5">
-              <Button
-                onClick={() => navigate('/itinerary')}
-                className="h-8 bg-[#20a7db] text-[10px] shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]"
-              >
-                Open planner
-              </Button>
-            </div>
+          <div className="mt-auto grid gap-1.5 pt-3">
+            <Button
+              onClick={() => navigate('/itinerary')}
+              className="h-9 bg-[#20a7db] text-xs shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]"
+            >
+              Open itinerary planner
+            </Button>
           </div>
         </aside>
       </main>

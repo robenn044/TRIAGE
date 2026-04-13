@@ -1,5 +1,0 @@
-# Face Pi — Python dependencies (lightweight)
-opencv-python-headless==4.10.0.84
-httpx>=0.28.0
-numpy>=1.26.0
-pyaudio
