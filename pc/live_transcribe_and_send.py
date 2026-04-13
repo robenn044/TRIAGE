@@ -20,6 +20,56 @@ from faster_whisper import WhisperModel
 from send_transcript import post_transcript
 
 
+def list_input_devices():
+    hostapis = sd.query_hostapis()
+    devices = []
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_input_channels"] <= 0:
+            continue
+        hostapi_name = hostapis[device["hostapi"]]["name"]
+        devices.append({
+            "index": index,
+            "name": device["name"],
+            "hostapi": hostapi_name,
+            "default_samplerate": device["default_samplerate"],
+        })
+    return devices
+
+
+def print_input_devices():
+    print("Available input devices:")
+    for device in list_input_devices():
+        print(
+            f"{device['index']}: {device['name']} "
+            f"[{device['hostapi']}] default_sr={device['default_samplerate']}"
+        )
+
+
+def resolve_input_device(requested_index: int | None):
+    devices = list_input_devices()
+    if not devices:
+        raise RuntimeError("No input devices with capture channels were found.")
+
+    if requested_index is not None:
+        for device in devices:
+            if device["index"] == requested_index:
+                return device
+        raise RuntimeError(f"Input device {requested_index} was not found.")
+
+    default_input, _default_output = sd.default.device
+    for device in devices:
+        if device["index"] == default_input:
+            return device
+
+    preferred_hostapis = ("Windows WASAPI", "Windows DirectSound", "MME")
+    for hostapi_name in preferred_hostapis:
+        for device in devices:
+            if device["hostapi"] == hostapi_name:
+                return device
+
+    return devices[0]
+
+
 def rms(samples: np.ndarray) -> float:
     return math.sqrt(float(np.mean(np.square(samples), dtype=np.float64)))
 
@@ -79,8 +129,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sample-rate",
         type=int,
-        default=16000,
-        help="Microphone sample rate.",
+        default=None,
+        help="Microphone sample rate. Defaults to the device native rate.",
     )
     parser.add_argument(
         "--block-ms",
@@ -148,7 +198,7 @@ def main() -> int:
     args = parse_args()
 
     if args.list_devices:
-        print(sd.query_devices())
+        print_input_devices()
         return 0
 
     model = WhisperModel(
@@ -157,7 +207,9 @@ def main() -> int:
         compute_type=args.compute_type,
     )
 
-    block_frames = max(1, int(args.sample_rate * (args.block_ms / 1000.0)))
+    input_device = resolve_input_device(args.input_device)
+    sample_rate = int(args.sample_rate or input_device["default_samplerate"] or 16000)
+    block_frames = max(1, int(sample_rate * (args.block_ms / 1000.0)))
     silence_seconds = args.silence_ms / 1000.0
     min_speech_seconds = args.min_speech_ms / 1000.0
     audio_queue: queue.Queue[np.ndarray | None] = queue.Queue()
@@ -170,7 +222,8 @@ def main() -> int:
     print("Starting PC listener")
     print(f"Pi relay:      {args.pi}/api/transcript")
     print(f"Whisper model: {args.model}")
-    print(f"Input device:  {args.input_device if args.input_device is not None else 'default'}")
+    print(f"Input device:  {input_device['index']} {input_device['name']} [{input_device['hostapi']}]")
+    print(f"Sample rate:   {sample_rate}")
     print("Stay quiet for calibration...")
 
     noise_samples: list[float] = []
@@ -179,14 +232,31 @@ def main() -> int:
     speech_started_at: float | None = None
     last_voice_at: float | None = None
 
-    with sd.InputStream(
-        samplerate=args.sample_rate,
-        blocksize=block_frames,
-        channels=1,
-        dtype="float32",
-        device=args.input_device,
-        callback=audio_callback,
-    ):
+    stream_kwargs = {
+        "samplerate": sample_rate,
+        "blocksize": block_frames,
+        "channels": 1,
+        "dtype": "float32",
+        "device": input_device["index"],
+        "callback": audio_callback,
+    }
+
+    try:
+        stream = sd.InputStream(**stream_kwargs)
+    except Exception as exc:
+        fallback_rate = 16000
+        if sample_rate == fallback_rate:
+            raise RuntimeError(
+                f"Could not open input device {input_device['index']} ({input_device['name']}): {exc}"
+            ) from exc
+        print(f"Falling back to 16000 Hz because the device rejected {sample_rate} Hz")
+        sample_rate = fallback_rate
+        block_frames = max(1, int(sample_rate * (args.block_ms / 1000.0)))
+        stream_kwargs["samplerate"] = sample_rate
+        stream_kwargs["blocksize"] = block_frames
+        stream = sd.InputStream(**stream_kwargs)
+
+    with stream:
         calibration_deadline = time.monotonic() + args.calibration_seconds
 
         while True:
@@ -227,7 +297,7 @@ def main() -> int:
             if has_voice:
                 last_voice_at = now
 
-            segment_seconds = len(merge_chunks(speech_chunks)) / args.sample_rate
+            segment_seconds = len(merge_chunks(speech_chunks)) / sample_rate
             should_flush = False
 
             if last_voice_at is not None and now - last_voice_at >= silence_seconds:
@@ -247,7 +317,7 @@ def main() -> int:
             if started_at is None:
                 continue
 
-            duration = len(samples) / args.sample_rate
+            duration = len(samples) / sample_rate
             if duration < min_speech_seconds:
                 print("Skipped short segment")
                 continue
@@ -256,7 +326,7 @@ def main() -> int:
                 wav_path = tmp.name
 
             try:
-                write_wav(wav_path, samples, args.sample_rate)
+                write_wav(wav_path, samples, sample_rate)
                 print("Transcribing...")
                 segments, info = model.transcribe(
                     wav_path,
