@@ -16,7 +16,9 @@ Runs as a systemd service on the Brain Pi.
 """
 
 import asyncio
+import glob
 import logging
+import os
 import signal
 import sys
 import time
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ───────────────────────────────────────────
 CAMERA_INDEX = 0
+CAMERA_DEVICE_ENV = "TRIAGE_CAMERA_DEVICE"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 CAPTURE_FPS = 30
@@ -128,25 +131,75 @@ def start_lan_server():
     server.serve_forever()
 
 
+def build_camera_candidates():
+    """
+    Build a candidate list that prefers:
+      1. TRIAGE_CAMERA_DEVICE env var if set
+      2. /dev/v4l/by-id symlinks (stable USB camera paths)
+      3. concrete /dev/video* device nodes
+      4. legacy numeric index fallback
+    """
+    candidates = []
+
+    env_device = os.environ.get(CAMERA_DEVICE_ENV, "").strip()
+    if env_device:
+        candidates.append(env_device)
+
+    by_id_paths = sorted(glob.glob("/dev/v4l/by-id/*"))
+    candidates.extend(by_id_paths)
+
+    video_nodes = sorted(
+        glob.glob("/dev/video*"),
+        key=lambda path: int(path.replace("/dev/video", "")) if path.replace("/dev/video", "").isdigit() else 999,
+    )
+    candidates.extend(video_nodes)
+
+    # Keep integer fallback last.
+    candidates.append(CAMERA_INDEX)
+
+    # De-duplicate while preserving order.
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def open_camera(candidate, backend, backend_name):
+    cap = cv2.VideoCapture(candidate, backend)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    if cap.isOpened():
+        logger.info("Camera opened with %s backend using %s", backend_name, candidate)
+        return cap
+    cap.release()
+    return None
+
+
 # ── Main Capture Loop ─────────────────────────────────────
 async def capture_loop():
     global latest_frame_jpeg
 
     cap = None
-    for backend_name, backend in (("V4L2", cv2.CAP_V4L2), ("default", cv2.CAP_ANY)):
-        candidate = cv2.VideoCapture(CAMERA_INDEX, backend)
-        candidate.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        candidate.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        candidate.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
-        candidate.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        if candidate.isOpened():
-            cap = candidate
-            logger.info("Camera opened with %s backend", backend_name)
+    candidates = build_camera_candidates()
+    logger.info("Trying camera candidates: %s", ", ".join(map(str, candidates)))
+
+    for candidate in candidates:
+        for backend_name, backend in (("V4L2", cv2.CAP_V4L2), ("default", cv2.CAP_ANY)):
+            cap = open_camera(candidate, backend, backend_name)
+            if cap is not None:
+                break
+        if cap is not None:
             break
-        candidate.release()
 
     if cap is None:
-        logger.error("Failed to open camera at index %d", CAMERA_INDEX)
+        logger.error("Failed to open any camera device")
         sys.exit(1)
 
     actual_fps = cap.get(cv2.CAP_PROP_FPS) or CAPTURE_FPS
