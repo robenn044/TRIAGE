@@ -108,6 +108,10 @@ export default function CameraAskAI() {
   const [micEnabled, setMicEnabled] = useState(true)
   // Server camera feed as data URL
   const [feedSrc, setFeedSrc] = useState<string | null>(null)
+  const [micStreamEnabled, setMicStreamEnabled] = useState(true)
+
+  // Mic stream URL: injected by serve_dashboard.py at runtime
+  const micStreamUrl = (window as any).__TRIAGE_MIC_URL || null
 
   // Keep stateRef in sync so lock timer callback can read current state
   useEffect(() => { stateRef.current = state }, [state])
@@ -439,6 +443,18 @@ export default function CameraAskAI() {
         style={{ opacity: entered ? 0 : 1, transition: 'opacity 800ms cubic-bezier(0.4,0,0.2,1)' }}
       />
 
+      {/* ── Microphone Stream ── */}
+      {micStreamUrl && micStreamEnabled && (
+        <audio 
+          autoPlay 
+          src={micStreamUrl} 
+          style={{ display: 'none' }} 
+          ref={(el) => {
+            if (el) el.volume = 1.0;
+          }}
+        />
+      )}
+
       {/* ── Header ── */}
         <header className="shrink-0 bg-[#20a7db]">
           <div className="mx-auto flex w-full items-center gap-2 px-3 py-1.5">
@@ -472,6 +488,18 @@ export default function CameraAskAI() {
             </div>
             {/* Nav buttons */}
             <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#20a7db]/[0.12] bg-[#f4fbfe] p-1">
+              <Button
+                onClick={() => setMicStreamEnabled(!micStreamEnabled)}
+                size="lg"
+                title={micStreamEnabled ? "Mute Robot Mic" : "Unmute Robot Mic"}
+                className={`h-9 w-9 rounded-full p-0 shadow-sm ${
+                  micStreamEnabled
+                    ? 'bg-green-500 shadow-green-500/25 hover:bg-green-600'
+                    : 'bg-slate-400 shadow-slate-400/25 hover:bg-slate-500'
+                }`}
+              >
+                {micStreamEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+              </Button>
               <Button
                 onClick={() => setMicEnabled(!micEnabled)}
                 size="lg"

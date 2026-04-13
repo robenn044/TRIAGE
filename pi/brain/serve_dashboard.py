@@ -114,25 +114,34 @@ def main():
         print("Run 'npm run build' first, then copy dist/ to the Pi.")
         sys.exit(1)
 
-    # Inject MJPEG stream URL into the built index.html if not already present
+    # Inject MJPEG stream and Mic stream URLs into the built index.html
     index_path = os.path.join(DIST_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r") as f:
             html = f.read()
-        # The env var is baked at build time, but we can't change it post-build.
-        # Instead, the dashboard auto-detects: if window.__TRIAGE_CAMERA_URL is set, use it.
-        if "__TRIAGE_CAMERA_URL" not in html:
-            inject = '<script>window.__TRIAGE_CAMERA_URL="http://triageface.local:8085/stream";</script>'
+        
+        # Inject script if not already present
+        if "__TRIAGE_CAMERA_URL" not in html or "__TRIAGE_MIC_URL" not in html:
+            inject = (
+                '<script>'
+                'window.__TRIAGE_CAMERA_URL="http://triageface.local:8085/stream";'
+                'window.__TRIAGE_MIC_URL="http://triageface.local:8086/stream";'
+                '</script>'
+            )
+            # Remove old injection if only camera was there
+            if "__TRIAGE_CAMERA_URL" in html and "__TRIAGE_MIC_URL" not in html:
+                import re
+                html = re.sub(r'<script>window.__TRIAGE_CAMERA_URL=.*?</script>', '', html)
+
             html = html.replace("</head>", f"{inject}</head>", 1)
             with open(index_path, "w") as f:
                 f.write(html)
-            print(f"Injected camera URL into index.html")
+            print(f"Injected camera and microphone URLs into index.html")
 
     with socketserver.TCPServer(("0.0.0.0", PORT), DashboardHandler) as httpd:
         print(f"Dashboard serving on http://localhost:{PORT}")
         print(f"Camera stream: http://triageface.local:8085/stream")
-        print(f"API proxy → {VERCEL_BASE}")
-        httpd.serve_forever()
+        print(f"Mic stream:    http://triageface.local:8086/stream")
 
 
 if __name__ == "__main__":
