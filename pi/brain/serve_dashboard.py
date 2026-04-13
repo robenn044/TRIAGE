@@ -42,6 +42,7 @@ DEFAULT_WHISPER_MODEL = os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bi
 DEFAULT_WHISPER_THREADS = "4"
 DEFAULT_TTS_VOICE = "en-us"
 DEFAULT_TTS_SPEED = "165"
+LAST_TTS_WAV = os.path.join(tempfile.gettempdir(), "triage-last-response.wav")
 SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
     "When shown an image, describe what you see and answer the tourist's question directly. "
@@ -331,13 +332,39 @@ def run_local_stt(audio_b64: str):
             pass
 
 
+def generate_tts_wav(text: str, output_path: str):
+    tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
+    tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
+    tts_speed = os.environ.get("TRIAGE_TTS_SPEED", DEFAULT_TTS_SPEED)
+
+    cmd = [
+        tts_binary,
+        "-v", tts_voice,
+        "-s", str(tts_speed),
+        "-w", output_path,
+        text,
+    ]
+    completed = subprocess.run(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Failed to generate TTS wav")
+
+
 def speak_locally(text: str):
-    """Speak text on the Brain Pi using espeak-ng, stopping any prior utterance."""
+    """Speak text on the Brain Pi using espeak-ng, and save the last wav preview."""
     global tts_process
 
     tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
     tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
     tts_speed = os.environ.get("TRIAGE_TTS_SPEED", DEFAULT_TTS_SPEED)
+
+    generate_tts_wav(text, LAST_TTS_WAV)
 
     if tts_process and tts_process.poll() is None:
         tts_process.terminate()
@@ -382,6 +409,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=DIST_DIR, **kwargs)
 
     def do_GET(self):
+        if self.path == "/api/last-tts.wav":
+            self._handle_last_tts_wav()
+            return
         if self.path == "/api/transcript":
             self._handle_transcript_get()
             return
@@ -530,6 +560,22 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         item = transcript_queue.pop(0)
         json_response(self, 200, item)
 
+    def _handle_last_tts_wav(self):
+        if not os.path.exists(LAST_TTS_WAV):
+            json_response(self, 404, {"error": "No TTS preview generated yet"})
+            return
+
+        with open(LAST_TTS_WAV, "rb") as f:
+            body = f.read()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _handle_local_speak(self):
         """Speak text locally on the Brain Pi."""
         try:
@@ -639,6 +685,7 @@ def main():
         print(f"Camera stream: http://localhost:8085/stream")
         print("Local AI:      POST http://localhost:3000/api/ask")
         print("Local TTS:     POST http://localhost:3000/api/speak")
+        print("Last TTS WAV:  GET  http://localhost:3000/api/last-tts.wav")
         print("Local STT:     POST http://localhost:3000/api/stt")
         print("Transcript:    GET/POST http://localhost:3000/api/transcript")
         print("Other /api/* requests still proxy to Vercel")
