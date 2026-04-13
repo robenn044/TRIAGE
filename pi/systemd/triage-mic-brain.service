@@ -1,0 +1,16 @@
+[Unit]
+Description=TRIAGE Brain Pi Microphone Transcriber
+After=network-online.target triage-dashboard-server.service
+Wants=network-online.target triage-dashboard-server.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/TRIAGE/pi/brain
+ExecStart=/home/admin/TRIAGE/pi/brain/venv/bin/python mic_transcriber.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

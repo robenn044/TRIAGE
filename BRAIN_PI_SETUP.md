@@ -4,7 +4,7 @@ This setup assumes:
 
 - the webcam is plugged into the Brain Pi
 - camera video stays on the Brain Pi
-- speech-to-text runs on your PC and sends transcript text to the Brain Pi
+- speech-to-text runs locally on the Brain Pi microphone
 - the dashboard opens automatically on boot
 - the local dashboard server handles `POST /api/ask` for Gemma 4 or Ollama
 - the local dashboard server handles `GET/POST /api/transcript` for transcript relay
@@ -30,7 +30,7 @@ git pull
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv python3-pip nodejs npm chromium espeak-ng
+sudo apt install -y python3 python3-venv python3-pip nodejs npm chromium espeak-ng alsa-utils
 sudo apt install -y libcap-dev libjpeg-dev libopenjp2-7
 sudo apt install -y libopenblas-dev
 ```
@@ -74,17 +74,25 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4
 ```
 
+Optional microphone device override if your webcam mic is not auto-detected:
+
+```env
+TRIAGE_MIC_DEVICE=plughw:CARD=Camera,DEV=0
+```
+
 ## 7. Install systemd services
 
 ```bash
 cd ~/TRIAGE
 sudo cp pi/systemd/triage-camera-brain.service /etc/systemd/system/
 sudo cp pi/systemd/triage-dashboard-server.service /etc/systemd/system/
+sudo cp pi/systemd/triage-mic-brain.service /etc/systemd/system/
 sudo cp pi/systemd/triage-brain.service /etc/systemd/system/
 sudo cp pi/systemd/triage-dashboard-kiosk.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable triage-camera-brain
 sudo systemctl enable triage-dashboard-server
+sudo systemctl enable triage-mic-brain
 sudo systemctl enable triage-brain
 sudo systemctl enable triage-dashboard-kiosk
 ```
@@ -94,6 +102,7 @@ sudo systemctl enable triage-dashboard-kiosk
 ```bash
 sudo systemctl restart triage-camera-brain
 sudo systemctl restart triage-dashboard-server
+sudo systemctl restart triage-mic-brain
 sudo systemctl restart triage-brain
 sudo systemctl restart triage-dashboard-kiosk
 ```
@@ -152,12 +161,11 @@ Download the latest generated response WAV:
 curl http://localhost:3000/api/last-tts.wav -o /tmp/triage-last-response.wav
 ```
 
-Check transcript relay:
+Check local microphone transcriber:
 
 ```bash
-curl http://localhost:3000/api/transcript \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello Triage, tell me about this place.","source":"manual-test"}'
+sudo systemctl status triage-mic-brain --no-pager
+journalctl -u triage-mic-brain -n 40 --no-pager
 ```
 
 Check Arduino:
@@ -186,37 +194,23 @@ If needed, test in Chromium at:
 
 - `http://localhost:3000/dashboard`
 
-## 11. PC transcript sender test
-
-From your PC:
-
-```bash
-python pc/send_transcript.py --pi http://TRIAGE_PI_IP:3000 "Hello Triage, what can I see here?"
-```
-
-The Brain Pi dashboard should:
-
-- switch to `Thinking...`
-- send the text to local `/api/ask`
-- show the answer on screen
-- speak the answer on the Pi speakers
-
-## 12. Full end-to-end test
+## 11. Full end-to-end test
 
 1. Reboot the Brain Pi.
 2. Wait for Chromium to open `http://localhost:3000/dashboard`.
 3. Confirm live video appears.
-4. From your PC, send a test transcript to the Pi.
+4. Speak near the webcam microphone connected to the Brain Pi.
 5. Confirm the transcript appears in the dashboard.
 6. Confirm Gemma 4 returns an answer.
 7. Confirm the browser speaks the answer through the Pi audio output.
 8. Test robot controls and `End Trip`.
 
-## 13. Logs if something fails
+## 12. Logs if something fails
 
 ```bash
 journalctl -u triage-camera-brain -n 100 --no-pager
 journalctl -u triage-dashboard-server -n 100 --no-pager
+journalctl -u triage-mic-brain -n 100 --no-pager
 journalctl -u triage-dashboard-kiosk -n 100 --no-pager
 journalctl -u triage-brain -n 100 --no-pager
 ```
@@ -225,5 +219,4 @@ journalctl -u triage-brain -n 100 --no-pager
 
 - `camera.py` runs on the Brain Pi for lowest possible dashboard latency.
 - `/api/ask`, `/api/speak`, and `/api/transcript` are served locally by `serve_dashboard.py`.
-- Your PC can use any STT tool you like as long as it sends plain text to `POST /api/transcript`.
-- See [PC_STT_SETUP.md](/C:/Users/roben/Downloads/TRIAGE/PC_STT_SETUP.md) for the always-listening Windows/PC microphone relay setup.
+- `mic_transcriber.py` captures the Brain Pi microphone with ALSA, transcribes locally, and posts the final text to `/api/transcript`.
