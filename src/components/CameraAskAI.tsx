@@ -16,11 +16,13 @@ const PLANNER_STEPS = [
 ]
 
 const STT_TARGET_SAMPLE_RATE = 16_000
-const STT_RMS_THRESHOLD = 0.014
+const STT_RMS_FLOOR = 0.02
 const STT_SILENCE_MS = 1_200
 const STT_MIN_AUDIO_MS = 900
 const STT_MIN_WORDS = 2
 const STT_MIN_CHARS = 8
+const STT_MIN_VOICED_CHUNKS = 4
+const STT_CALIBRATION_MS = 1_500
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
@@ -153,6 +155,9 @@ export default function CameraAskAI() {
   const captureActiveRef = useRef(false)
   const processingRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const voicedChunkCountRef = useRef(0)
+  const noiseFloorRef = useRef(STT_RMS_FLOOR)
+  const calibrationStartedAtRef = useRef<number | null>(null)
   const isSpeakingRef = useRef(false)
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
@@ -377,6 +382,8 @@ export default function CameraAskAI() {
     captureActiveRef.current = false
     const chunks = audioChunksRef.current
     audioChunksRef.current = []
+    const voicedChunks = voicedChunkCountRef.current
+    voicedChunkCountRef.current = 0
 
     const context = audioContextRef.current
     if (!context || chunks.length === 0) {
@@ -385,7 +392,7 @@ export default function CameraAskAI() {
 
     const merged = concatFloat32Chunks(chunks)
     const durationMs = (merged.length / context.sampleRate) * 1000
-    if (durationMs < STT_MIN_AUDIO_MS) {
+    if (durationMs < STT_MIN_AUDIO_MS || voicedChunks < STT_MIN_VOICED_CHUNKS) {
       setTranscript('')
       setState(micEnabled ? 'listening' : 'idle')
       return
@@ -422,6 +429,8 @@ export default function CameraAskAI() {
       clearSilenceTimer()
       captureActiveRef.current = false
       audioChunksRef.current = []
+      voicedChunkCountRef.current = 0
+      calibrationStartedAtRef.current = null
 
       audioProcessorRef.current?.disconnect()
       audioSourceRef.current?.disconnect()
@@ -479,6 +488,8 @@ export default function CameraAskAI() {
         audioSourceRef.current = source
         audioProcessorRef.current = processor
         muteGainRef.current = muteGain
+        calibrationStartedAtRef.current = Date.now()
+        noiseFloorRef.current = STT_RMS_FLOOR
         setState('listening')
 
         processor.onaudioprocess = (event) => {
@@ -490,11 +501,22 @@ export default function CameraAskAI() {
           const chunk = new Float32Array(input)
           const sumSquares = chunk.reduce((sum, sample) => sum + sample * sample, 0)
           const rms = Math.sqrt(sumSquares / chunk.length)
-          const hasSpeech = rms >= STT_RMS_THRESHOLD
+          const calibrationStartedAt = calibrationStartedAtRef.current ?? Date.now()
+          if (Date.now() - calibrationStartedAt < STT_CALIBRATION_MS) {
+            noiseFloorRef.current = Math.max(
+              STT_RMS_FLOOR,
+              noiseFloorRef.current * 0.9 + rms * 0.1,
+            )
+            return
+          }
+
+          const dynamicThreshold = Math.max(STT_RMS_FLOOR, noiseFloorRef.current * 3)
+          const hasSpeech = rms >= dynamicThreshold
 
           if (hasSpeech && !captureActiveRef.current) {
             captureActiveRef.current = true
             audioChunksRef.current = []
+            voicedChunkCountRef.current = 0
           }
 
           if (captureActiveRef.current) {
@@ -502,6 +524,7 @@ export default function CameraAskAI() {
           }
 
           if (hasSpeech) {
+            voicedChunkCountRef.current += 1
             clearSilenceTimer()
             silenceTimerRef.current = setTimeout(() => {
               void flushCapturedAudio()
@@ -522,6 +545,8 @@ export default function CameraAskAI() {
       clearSilenceTimer()
       captureActiveRef.current = false
       audioChunksRef.current = []
+      voicedChunkCountRef.current = 0
+      calibrationStartedAtRef.current = null
       audioProcessorRef.current?.disconnect()
       audioSourceRef.current?.disconnect()
       muteGainRef.current?.disconnect()

@@ -257,7 +257,7 @@ def run_local_stt(audio_b64: str):
         if not transcript:
             transcript = extract_transcript(completed.stdout)
         if not transcript:
-            raise RuntimeError("whisper-cli returned no transcript text")
+            return ""
         return transcript
     finally:
         try:
@@ -369,9 +369,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         try:
             transcript = run_local_stt(audio)
         except FileNotFoundError as e:
+            print(f"STT missing dependency: {e}")
             json_response(self, 503, {"error": str(e)})
             return
         except Exception as e:
+            print(f"STT failure: {e}")
             json_response(self, 500, {"error": str(e)})
             return
 
