@@ -7,6 +7,18 @@ import RobotControls from './RobotControls'
 import EndTripButton from './EndTripButton'
 
 type AssistantState = 'listening' | 'processing' | 'speaking' | 'error' | 'idle'
+type BrowserSpeechRecognition = {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onstart: (() => void) | null
+  onresult: ((event: any) => void) | null
+  onerror: ((event: any) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort: () => void
+}
 
 const PLANNER_STEPS = [
   'Choose an Albanian city.',
@@ -125,6 +137,10 @@ export default function CameraAskAI() {
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
   const latestFrameRef = useRef<string | null>(null)
+  const browserVideoRef = useRef<HTMLVideoElement | null>(null)
+  const browserCameraStreamRef = useRef<MediaStream | null>(null)
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
+  const recognitionTranscriptRef = useRef('')
   const audioStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
@@ -178,6 +194,8 @@ export default function CameraAskAI() {
   const mjpegUrl = (window as any).__TRIAGE_CAMERA_URL
     || import.meta.env.VITE_CAMERA_STREAM_URL
     || null
+  const speechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  const preferBrowserMode = !mjpegUrl
 
   useEffect(() => {
     if (mjpegUrl) {
@@ -224,6 +242,52 @@ export default function CameraAskAI() {
     return () => { cancelled = true }
   }, [mjpegUrl, cameraError, cameraReady])
 
+  useEffect(() => {
+    if (!preferBrowserMode || !navigator.mediaDevices?.getUserMedia) {
+      return
+    }
+
+    let cancelled = false
+
+    const startBrowserCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+          },
+          audio: false,
+        })
+
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
+
+        browserCameraStreamRef.current = stream
+        if (browserVideoRef.current) {
+          browserVideoRef.current.srcObject = stream
+          await browserVideoRef.current.play().catch(() => undefined)
+        }
+
+        setFeedSrc(null)
+        setCameraReady(true)
+        setCameraError(null)
+      } catch (error) {
+        console.error('Browser camera failed:', error)
+        setCameraReady(false)
+        setCameraError(`Cannot access webcam: ${getErrorMessage(error)}`)
+      }
+    }
+
+    void startBrowserCamera()
+
+    return () => {
+      cancelled = true
+      browserCameraStreamRef.current?.getTracks().forEach(track => track.stop())
+      browserCameraStreamRef.current = null
+    }
+  }, [preferBrowserMode])
+
   const cleanupRecording = useCallback(async () => {
     clearTimeout(recordTimeoutRef.current)
     audioProcessorRef.current?.disconnect()
@@ -241,6 +305,26 @@ export default function CameraAskAI() {
       await audioContextRef.current.close()
       audioContextRef.current = null
     }
+  }, [])
+
+  const captureBrowserFrame = useCallback(() => {
+    const video = browserVideoRef.current
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0) {
+      return null
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      return null
+    }
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+    return dataUrl.split(',')[1] || null
   }, [])
 
   const speak = useCallback(async (text: string) => {
@@ -261,6 +345,40 @@ export default function CameraAskAI() {
     }, estimatedMs)
 
     try {
+      if (preferBrowserMode && 'speechSynthesis' in window) {
+        const voices = window.speechSynthesis.getVoices()
+        const utterance = new SpeechSynthesisUtterance(text)
+        const preferredVoice = voices.find(voice => voice.lang.toLowerCase().startsWith('en')) || voices[0]
+
+        if (preferredVoice) {
+          utterance.voice = preferredVoice
+          utterance.lang = preferredVoice.lang
+        } else {
+          utterance.lang = 'en-US'
+        }
+
+        await new Promise<void>((resolve, reject) => {
+          let settled = false
+          utterance.onend = () => {
+            if (!settled) {
+              settled = true
+              resolve()
+            }
+          }
+          utterance.onerror = (event: any) => {
+            if (!settled) {
+              settled = true
+              reject(new Error(event?.error || 'speech synthesis failed'))
+            }
+          }
+
+          window.speechSynthesis.cancel()
+          window.speechSynthesis.speak(utterance)
+        })
+
+        return
+      }
+
       const res = await fetchWithTimeout('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -286,7 +404,7 @@ export default function CameraAskAI() {
     setState('processing')
 
     try {
-      let image: string | null = latestFrameRef.current
+      let image: string | null = preferBrowserMode ? captureBrowserFrame() : latestFrameRef.current
       if (image === '__mjpeg_stream__' && mjpegUrl) {
         try {
           const snapUrl = mjpegUrl.replace('/stream', '/frame')
@@ -334,7 +452,89 @@ export default function CameraAskAI() {
     } finally {
       processingRef.current = false
     }
-  }, [mjpegUrl, speak])
+  }, [captureBrowserFrame, mjpegUrl, preferBrowserMode, speak])
+
+  const cleanupRecognition = useCallback(() => {
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    recognitionTranscriptRef.current = ''
+  }, [])
+
+  const stopBrowserRecognition = useCallback(() => {
+    recognitionRef.current?.stop()
+  }, [])
+
+  const startBrowserRecognition = useCallback(() => {
+    if (!speechRecognitionCtor) {
+      throw new Error('Chrome speech recognition is not available in this browser.')
+    }
+
+    const recognition = new speechRecognitionCtor() as BrowserSpeechRecognition
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+    recognitionTranscriptRef.current = ''
+
+    recognition.onstart = () => {
+      setTranscript('')
+      setLastAnswer('')
+      setSpeechHint('')
+      setState('listening')
+      setMicEnabled(true)
+    }
+
+    recognition.onresult = (event: any) => {
+      let interimText = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i]
+        const text = result[0]?.transcript?.trim?.() || ''
+        if (!text) continue
+
+        if (result.isFinal) {
+          recognitionTranscriptRef.current = `${recognitionTranscriptRef.current} ${text}`.trim()
+        } else {
+          interimText = `${interimText} ${text}`.trim()
+        }
+      }
+
+      setTranscript(interimText || recognitionTranscriptRef.current)
+    }
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event)
+      const errorCode = event?.error || 'speech recognition failed'
+
+      if (errorCode === 'no-speech') {
+        setTranscript('')
+        setMicEnabled(false)
+        setState('idle')
+        return
+      }
+
+      setLastAnswer(`Error: ${errorCode}`)
+      setMicEnabled(false)
+      setState('error')
+    }
+
+    recognition.onend = () => {
+      const text = recognitionTranscriptRef.current.trim()
+      recognitionRef.current = null
+      setMicEnabled(false)
+
+      if (!text) {
+        if (stateRef.current === 'listening') {
+          setState('idle')
+        }
+        return
+      }
+
+      setTranscript(text)
+      void askAI(text)
+    }
+
+    recognitionRef.current = recognition
+    recognition.start()
+  }, [askAI, speechRecognitionCtor])
 
   const transcribeCapturedAudio = useCallback(async () => {
     const context = audioContextRef.current
@@ -434,6 +634,24 @@ export default function CameraAskAI() {
   const toggleMicCapture = useCallback(async () => {
     if (processingRef.current || isSpeakingRef.current) return
 
+    if (preferBrowserMode && speechRecognitionCtor) {
+      if (micEnabled) {
+        stopBrowserRecognition()
+        return
+      }
+
+      try {
+        cleanupRecognition()
+        startBrowserRecognition()
+      } catch (error) {
+        console.error('Browser speech start failed:', error)
+        setLastAnswer(`Error: ${getErrorMessage(error)}`)
+        setState('error')
+        setMicEnabled(false)
+      }
+      return
+    }
+
     if (micEnabled) {
       try {
         await stopBrowserCapture()
@@ -456,12 +674,18 @@ export default function CameraAskAI() {
       setMicEnabled(false)
       await cleanupRecording()
     }
-  }, [cleanupRecording, micEnabled, startBrowserCapture, stopBrowserCapture])
+  }, [cleanupRecognition, cleanupRecording, micEnabled, preferBrowserMode, speechRecognitionCtor, startBrowserCapture, startBrowserRecognition, stopBrowserCapture, stopBrowserRecognition])
 
   useEffect(() => () => {
     clearTimeout(speechFallbackTimerRef.current)
+    cleanupRecognition()
+    browserCameraStreamRef.current?.getTracks().forEach(track => track.stop())
+    browserCameraStreamRef.current = null
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
     void cleanupRecording()
-  }, [cleanupRecording])
+  }, [cleanupRecognition, cleanupRecording])
 
   const statusText = (() => {
     switch (state) {
@@ -549,7 +773,32 @@ export default function CameraAskAI() {
               {cameraReady ? 'Live' : cameraError ? 'Error' : 'Starting…'}
             </div>
 
-            {feedSrc ? (
+            {preferBrowserMode ? (
+              <>
+                <video
+                  ref={browserVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+                {!cameraReady && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {cameraError ? (
+                      <div className="text-center px-4">
+                        <span className="text-lg">📷</span>
+                        <p className="mt-2 text-xs font-medium text-white/70">{cameraError}</p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Loader2 className="mx-auto h-6 w-6 animate-spin text-[#20a7db]/60" />
+                        <p className="mt-2 text-[10px] text-white/50">Connecting to webcam…</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : feedSrc ? (
               <img
                 src={feedSrc}
                 alt="Robot camera"
