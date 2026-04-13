@@ -18,6 +18,8 @@ const MIN_WORDS = 2
 const MIN_CHARS = 8
 const SNAPSHOT_TIMEOUT_MS = 2_000
 const ASK_TIMEOUT_MS = 20_000
+const STT_TARGET_SAMPLE_RATE = 16_000
+const MAX_RECORDING_MS = 12_000
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
@@ -33,10 +35,84 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
-interface TranscriptPayload {
-  id: number | null
-  text: string | null
-  source?: string
+function concatFloat32Chunks(chunks: Float32Array[]) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const merged = new Float32Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return merged
+}
+
+function downsampleTo16k(input: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) return input
+
+  const ratio = sourceRate / targetRate
+  const newLength = Math.round(input.length / ratio)
+  const output = new Float32Array(newLength)
+
+  let offsetResult = 0
+  let offsetBuffer = 0
+  while (offsetResult < output.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+    let accum = 0
+    let count = 0
+
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i++) {
+      accum += input[i]
+      count++
+    }
+
+    output[offsetResult] = count > 0 ? accum / count : 0
+    offsetResult++
+    offsetBuffer = nextOffsetBuffer
+  }
+
+  return output
+}
+
+function encodeWavBase64(input: Float32Array, sourceRate: number, targetRate: number) {
+  const mono = downsampleTo16k(input, sourceRate, targetRate)
+  const buffer = new ArrayBuffer(44 + mono.length * 2)
+  const view = new DataView(buffer)
+
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i))
+    }
+  }
+
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + mono.length * 2, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, targetRate, true)
+  view.setUint32(28, targetRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, mono.length * 2, true)
+
+  let offset = 44
+  for (let i = 0; i < mono.length; i++) {
+    const sample = Math.max(-1, Math.min(1, mono[i]))
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+    offset += 2
+  }
+
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+
+  return btoa(binary)
 }
 
 export default function CameraAskAI() {
@@ -45,9 +121,16 @@ export default function CameraAskAI() {
   const isSpeakingRef = useRef(false)
   const processingRef = useRef(false)
   const speechFallbackTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const recordTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
   const latestFrameRef = useRef<string | null>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const muteGainRef = useRef<GainNode | null>(null)
+  const audioChunksRef = useRef<Float32Array[]>([])
 
   const [entered, setEntered] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
@@ -55,7 +138,7 @@ export default function CameraAskAI() {
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
-  const [micEnabled, setMicEnabled] = useState(true)
+  const [micEnabled, setMicEnabled] = useState(false)
   const [feedSrc, setFeedSrc] = useState<string | null>(null)
 
   useEffect(() => { stateRef.current = state }, [state])
@@ -140,13 +223,32 @@ export default function CameraAskAI() {
     return () => { cancelled = true }
   }, [mjpegUrl, cameraError, cameraReady])
 
+  const cleanupRecording = useCallback(async () => {
+    clearTimeout(recordTimeoutRef.current)
+    audioProcessorRef.current?.disconnect()
+    audioSourceRef.current?.disconnect()
+    muteGainRef.current?.disconnect()
+    audioStreamRef.current?.getTracks().forEach(track => track.stop())
+
+    audioProcessorRef.current = null
+    audioSourceRef.current = null
+    muteGainRef.current = null
+    audioStreamRef.current = null
+    audioChunksRef.current = []
+
+    if (audioContextRef.current) {
+      await audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+  }, [])
+
   const speak = useCallback(async (text: string) => {
     clearTimeout(speechFallbackTimerRef.current)
 
     const finishSpeaking = () => {
       clearTimeout(speechFallbackTimerRef.current)
       isSpeakingRef.current = false
-      setState(micEnabled ? 'listening' : 'idle')
+      setState('idle')
     }
     isSpeakingRef.current = true
     setState('speaking')
@@ -170,7 +272,128 @@ export default function CameraAskAI() {
     } finally {
       finishSpeaking()
     }
-  }, [micEnabled])
+  }, [])
+
+  const transcribeCapturedAudio = useCallback(async () => {
+    const context = audioContextRef.current
+    const chunks = audioChunksRef.current
+    if (!context || chunks.length === 0) {
+      setState('idle')
+      setMicEnabled(false)
+      return
+    }
+
+    const merged = concatFloat32Chunks(chunks)
+    const wavAudio = encodeWavBase64(merged, context.sampleRate, STT_TARGET_SAMPLE_RATE)
+
+    setState('processing')
+    const res = await fetchWithTimeout('/api/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: wavAudio }),
+    }, 120_000)
+
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(errText || `STT error ${res.status}`)
+    }
+
+    const data = await res.json()
+    const text = (data.text as string | undefined)?.trim() || ''
+    if (!text || text.length < MIN_CHARS || text.split(/\s+/).filter(Boolean).length < MIN_WORDS) {
+      setTranscript('')
+      setState('idle')
+      setMicEnabled(false)
+      return
+    }
+
+    setTranscript(text)
+    setMicEnabled(false)
+    await askAI(text)
+  }, [askAI])
+
+  const stopBrowserCapture = useCallback(async () => {
+    try {
+      await transcribeCapturedAudio()
+    } finally {
+      await cleanupRecording()
+    }
+  }, [cleanupRecording, transcribeCapturedAudio])
+
+  const startBrowserCapture = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
+      throw new Error('Browser microphone capture is not supported here.')
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    })
+
+    const context = new window.AudioContext()
+    await context.resume()
+
+    const source = context.createMediaStreamSource(stream)
+    const processor = context.createScriptProcessor(4096, 1, 1)
+    const muteGain = context.createGain()
+    muteGain.gain.value = 0
+
+    audioStreamRef.current = stream
+    audioContextRef.current = context
+    audioSourceRef.current = source
+    audioProcessorRef.current = processor
+    muteGainRef.current = muteGain
+    audioChunksRef.current = []
+
+    processor.onaudioprocess = event => {
+      const input = event.inputBuffer.getChannelData(0)
+      audioChunksRef.current.push(new Float32Array(input))
+    }
+
+    source.connect(processor)
+    processor.connect(muteGain)
+    muteGain.connect(context.destination)
+
+    setTranscript('')
+    setLastAnswer('')
+    setState('listening')
+    setMicEnabled(true)
+
+    recordTimeoutRef.current = setTimeout(() => {
+      void stopBrowserCapture()
+    }, MAX_RECORDING_MS)
+  }, [stopBrowserCapture])
+
+  const toggleMicCapture = useCallback(async () => {
+    if (processingRef.current || isSpeakingRef.current) return
+
+    if (micEnabled) {
+      try {
+        await stopBrowserCapture()
+      } catch (error) {
+        console.error('Browser STT stop failed:', error)
+        setLastAnswer(`Error: ${getErrorMessage(error)}`)
+        setState('error')
+        setMicEnabled(false)
+      }
+      return
+    }
+
+    try {
+      await cleanupRecording()
+      await startBrowserCapture()
+    } catch (error) {
+      console.error('Browser STT start failed:', error)
+      setLastAnswer(`Error: ${getErrorMessage(error)}`)
+      setState('error')
+      setMicEnabled(false)
+      await cleanupRecording()
+    }
+  }, [cleanupRecording, micEnabled, startBrowserCapture, stopBrowserCapture])
 
   const askAI = useCallback(async (prompt: string) => {
     processingRef.current = true
@@ -220,62 +443,20 @@ export default function CameraAskAI() {
     } catch (error: unknown) {
       console.error('AI error:', error)
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
-      setState(micEnabled ? 'listening' : 'idle')
+      setState('idle')
     } finally {
       processingRef.current = false
     }
-  }, [mjpegUrl, speak, micEnabled])
+  }, [mjpegUrl, speak])
 
-  useEffect(() => {
-    if (!micEnabled) {
-      setState('idle')
-      return
-    }
-
-    setState(current => current === 'idle' ? 'listening' : current)
-
-    let cancelled = false
-
-    const pollTranscript = async () => {
-      while (!cancelled) {
-        if (processingRef.current || isSpeakingRef.current) {
-          await new Promise(r => setTimeout(r, 400))
-          continue
-        }
-
-        try {
-          const res = await fetch('/api/transcript')
-          if (res.ok) {
-            const data = await res.json() as TranscriptPayload
-            const text = data.text?.trim() || ''
-
-            if (text) {
-              const words = text.split(/\s+/).filter(Boolean).length
-              if (words >= MIN_WORDS && text.length >= MIN_CHARS) {
-                setTranscript(text)
-                await askAI(text)
-              }
-            } else if (!processingRef.current && !isSpeakingRef.current) {
-              setState('listening')
-            }
-          }
-        } catch (error) {
-          console.warn('Transcript poll failed:', error)
-        }
-
-        await new Promise(r => setTimeout(r, 500))
-      }
-    }
-
-    pollTranscript()
-    return () => { cancelled = true }
-  }, [askAI, micEnabled])
-
-  useEffect(() => () => clearTimeout(speechFallbackTimerRef.current), [])
+  useEffect(() => () => {
+    clearTimeout(speechFallbackTimerRef.current)
+    void cleanupRecording()
+  }, [cleanupRecording])
 
   const statusText = (() => {
     switch (state) {
-      case 'listening': return '🎙️ Listening…'
+      case 'listening': return '🎙️ Recording…'
       case 'processing': return '🧠 Thinking…'
       case 'speaking': return '🔊 Speaking…'
       case 'error': return '⚠️ Error'
@@ -319,9 +500,9 @@ export default function CameraAskAI() {
             </div>
             <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#20a7db]/[0.12] bg-[#f4fbfe] p-1">
               <Button
-                onClick={() => setMicEnabled(!micEnabled)}
+                onClick={() => void toggleMicCapture()}
                 size="lg"
-                title={micEnabled ? 'Pause transcript relay' : 'Resume transcript relay'}
+                title={micEnabled ? 'Stop recording and transcribe' : 'Start browser microphone recording'}
                 className={`h-9 w-9 rounded-full p-0 shadow-sm ${
                   micEnabled
                     ? 'bg-[#20a7db] shadow-[#20a7db]/25 hover:bg-[#1b96c5]'
@@ -414,8 +595,8 @@ export default function CameraAskAI() {
                     : transcript && state === 'listening'
                       ? transcript
                       : micEnabled
-                        ? 'Waiting for transcript from PC\u2026'
-                        : 'Transcript relay paused'}
+                        ? 'Recording from Chromium microphone\u2026 tap the mic again to send'
+                        : 'Tap the mic to speak'}
             </p>
           </div>
         </section>
