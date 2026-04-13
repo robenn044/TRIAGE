@@ -3,9 +3,10 @@
 This setup assumes:
 
 - the webcam is plugged into the Brain Pi
-- Chromium on the Brain Pi uses the webcam microphone directly for browser STT
+- Chromium on the Brain Pi uses the webcam microphone directly for capture
 - the dashboard opens automatically on boot
 - the local dashboard server handles `POST /api/ask` for Gemma 4 or Ollama
+- the local dashboard server handles `POST /api/stt` for offline speech-to-text
 
 ## 1. Hardware
 
@@ -29,7 +30,8 @@ git pull
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip nodejs npm chromium
-sudo apt install -y libcap-dev libatlas-base-dev libjpeg-dev libopenjp2-7
+sudo apt install -y libcap-dev libjpeg-dev libopenjp2-7
+sudo apt install -y libopenblas-dev
 ```
 
 ## 4. Install Node dependencies and build
@@ -65,6 +67,32 @@ Optional Ollama override:
 ```env
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4
+```
+
+## 6b. Install Offline STT with whisper.cpp
+
+Official upstream project:
+
+- [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+
+Install it with the helper script:
+
+```bash
+cd ~/TRIAGE/pi/brain
+chmod +x install_whisper_cpp.sh
+./install_whisper_cpp.sh
+```
+
+This follows the upstream quick-start flow:
+
+- clone `whisper.cpp`
+- build `whisper-cli`
+- download `ggml-base.en.bin`
+
+If you want a different model later:
+
+```bash
+WHISPER_MODEL_NAME=small.en ./install_whisper_cpp.sh
 ```
 
 ## 7. Install systemd services
@@ -105,6 +133,14 @@ Check dashboard server:
 curl http://localhost:3000/api/ask \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Say hello as Triage in one sentence."}'
+```
+
+Check local offline STT:
+
+```bash
+curl http://localhost:3000/api/stt \
+  -H "Content-Type: application/json" \
+  -d '{"audio":"BASE64_WAV_GOES_HERE"}'
 ```
 
 Check Arduino:
@@ -157,6 +193,6 @@ journalctl -u triage-brain -n 100 --no-pager
 
 ## Notes
 
-- Browser STT is hardware-direct. There is no separate microphone streaming service.
+- Browser STT capture is hardware-direct and the transcription runs locally via `whisper.cpp`.
 - `camera.py` runs on the Brain Pi for lowest possible dashboard latency.
-- `/api/ask` is served locally by `serve_dashboard.py`.
+- `/api/ask` and `/api/stt` are served locally by `serve_dashboard.py`.

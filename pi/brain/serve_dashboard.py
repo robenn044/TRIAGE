@@ -16,9 +16,12 @@ The Brain Pi kiosk Chromium loads http://localhost:3000/dashboard
 """
 
 import http.server
+import base64
 import os
 import socketserver
+import subprocess
 import sys
+import tempfile
 import urllib.request
 import urllib.error
 import json
@@ -33,10 +36,14 @@ ENV_FILE = os.path.join(REPO_DIR, ".env.local")
 GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_GEMINI_MODEL = "gemma-4-26b-a4b-it"
 DEFAULT_OLLAMA_MODEL = "gemma4"
+DEFAULT_WHISPER_BIN = os.path.expanduser("~/whisper.cpp/build/bin/whisper-cli")
+DEFAULT_WHISPER_MODEL = os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bin")
+DEFAULT_WHISPER_THREADS = "4"
 SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
-    "When shown an image, describe what you see and answer the tourist's question concisely. "
+    "When shown an image, describe what you see and answer the tourist's question directly. "
     "Keep answers under 3 sentences unless more detail is clearly needed. "
+    "Do not show your reasoning, bullet points, or internal analysis unless the user asks for them. "
     "Be warm, informative, and focus on what would interest a tourist."
 )
 
@@ -151,6 +158,82 @@ def try_google_ai(prompt: str, image: str | None, max_tokens: int):
         return None
 
 
+def extract_transcript(cli_output: str):
+    """Extract transcript text from whisper-cli stdout."""
+    transcript_lines = []
+    for line in cli_output.splitlines():
+        match = re.match(r"^\[[0-9:. ]+-->[0-9:. ]+\]\s*(.*)$", line.strip())
+        if not match:
+            continue
+        text = match.group(1).strip()
+        if text:
+            transcript_lines.append(text)
+
+    if transcript_lines:
+        return " ".join(transcript_lines).strip()
+
+    fallback_lines = []
+    for line in cli_output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("whisper_") or stripped.startswith("system_info:") or stripped.startswith("main:"):
+            continue
+        fallback_lines.append(stripped)
+    return " ".join(fallback_lines[-3:]).strip()
+
+
+def run_local_stt(audio_b64: str):
+    whisper_bin = os.environ.get("WHISPER_CPP_BIN", DEFAULT_WHISPER_BIN)
+    whisper_model = os.environ.get("WHISPER_MODEL", DEFAULT_WHISPER_MODEL)
+    whisper_threads = os.environ.get("WHISPER_THREADS", DEFAULT_WHISPER_THREADS)
+
+    if not os.path.exists(whisper_bin):
+        raise FileNotFoundError(
+            f"whisper-cli not found at {whisper_bin}. Install whisper.cpp or set WHISPER_CPP_BIN."
+        )
+    if not os.path.exists(whisper_model):
+        raise FileNotFoundError(
+            f"Whisper model not found at {whisper_model}. Download a model or set WHISPER_MODEL."
+        )
+
+    audio_bytes = base64.b64decode(audio_b64)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+        temp_audio.write(audio_bytes)
+        wav_path = temp_audio.name
+
+    try:
+        cmd = [
+            whisper_bin,
+            "-m", whisper_model,
+            "-f", wav_path,
+            "-l", "en",
+            "-t", str(whisper_threads),
+        ]
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"whisper-cli failed with code {completed.returncode}: "
+                f"{completed.stderr.strip() or completed.stdout.strip()}"
+            )
+
+        transcript = extract_transcript(completed.stdout)
+        if not transcript:
+            raise RuntimeError("whisper-cli returned no transcript text")
+        return transcript
+    finally:
+        try:
+            os.unlink(wav_path)
+        except FileNotFoundError:
+            pass
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """
     Serves static files from dist/, handles /api/ask locally, and proxies the
@@ -178,6 +261,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/ask":
             self._handle_local_ask()
+            return
+        if self.path == "/api/stt":
+            self._handle_local_stt()
             return
         if self.path.startswith("/api/"):
             self._proxy_to_vercel("POST")
@@ -228,6 +314,32 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         json_response(self, 200, result)
+
+    def _handle_local_stt(self):
+        """Handle /api/stt locally using whisper.cpp on the Brain Pi."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            json_response(self, 400, {"error": "Invalid JSON body"})
+            return
+
+        audio = payload.get("audio")
+        if not isinstance(audio, str) or not audio.strip():
+            json_response(self, 400, {"error": "audio is required"})
+            return
+
+        try:
+            transcript = run_local_stt(audio)
+        except FileNotFoundError as e:
+            json_response(self, 503, {"error": str(e)})
+            return
+        except Exception as e:
+            json_response(self, 500, {"error": str(e)})
+            return
+
+        json_response(self, 200, {"text": transcript, "provider": "whisper.cpp"})
 
     def _proxy_to_vercel(self, method: str):
         """Forward /api/* requests to Vercel."""
@@ -309,6 +421,7 @@ def main():
         print(f"Dashboard serving on http://localhost:{PORT}")
         print(f"Camera stream: http://localhost:8085/stream")
         print("Local AI:      POST http://localhost:3000/api/ask")
+        print("Local STT:     POST http://localhost:3000/api/stt")
         print("Other /api/* requests still proxy to Vercel")
         httpd.serve_forever()
 

@@ -9,49 +9,18 @@ import EndTripButton from './EndTripButton'
 /* ── Types ─────────────────────────────────────────────── */
 type AssistantState = 'listening' | 'processing' | 'speaking' | 'error' | 'idle'
 
-interface SpeechRecognitionEvent {
-  results: SpeechRecognitionResultList
-  resultIndex: number
-}
-interface SpeechRecognitionErrorEvent {
-  error: string
-}
-interface SpeechRecognitionAlternative {
-  transcript: string
-  confidence: number
-}
-interface SpeechRecognitionResult {
-  0: SpeechRecognitionAlternative
-  isFinal: boolean
-}
-interface SpeechRecognitionResultList {
-  length: number
-  [index: number]: SpeechRecognitionResult
-}
-interface SpeechRecognitionInstance {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  maxAlternatives: number
-  onresult: ((event: SpeechRecognitionEvent) => void) | null
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionInstance
-    webkitSpeechRecognition?: new () => SpeechRecognitionInstance
-  }
-}
-
 const PLANNER_STEPS = [
   'Choose an Albanian city.',
   'Answer a short survey.',
   'Get a personal itinerary.',
 ]
+
+const STT_TARGET_SAMPLE_RATE = 16_000
+const STT_RMS_THRESHOLD = 0.014
+const STT_SILENCE_MS = 1_200
+const STT_MIN_AUDIO_MS = 900
+const STT_MIN_WORDS = 2
+const STT_MIN_CHARS = 8
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
@@ -87,11 +56,103 @@ function pickVoice(): SpeechSynthesisVoice | null {
   return null
 }
 
+function concatFloat32Chunks(chunks: Float32Array[]) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const merged = new Float32Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return merged
+}
+
+function downsampleTo16k(input: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) return input
+
+  const ratio = sourceRate / targetRate
+  const newLength = Math.round(input.length / ratio)
+  const output = new Float32Array(newLength)
+
+  let offsetResult = 0
+  let offsetBuffer = 0
+  while (offsetResult < output.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+    let accum = 0
+    let count = 0
+
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i++) {
+      accum += input[i]
+      count++
+    }
+
+    output[offsetResult] = count > 0 ? accum / count : 0
+    offsetResult++
+    offsetBuffer = nextOffsetBuffer
+  }
+
+  return output
+}
+
+function encodeWavBase64(input: Float32Array, sourceRate: number, targetRate: number) {
+  const mono = downsampleTo16k(input, sourceRate, targetRate)
+  const buffer = new ArrayBuffer(44 + mono.length * 2)
+  const view = new DataView(buffer)
+
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i))
+    }
+  }
+
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + mono.length * 2, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, targetRate, true)
+  view.setUint32(28, targetRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, mono.length * 2, true)
+
+  let offset = 44
+  for (let i = 0; i < mono.length; i++) {
+    const sample = Math.max(-1, Math.min(1, mono[i]))
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+    offset += 2
+  }
+
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+
+  return btoa(binary)
+}
+
+function getAudioContextCtor() {
+  return window.AudioContext
+}
+
 export default function CameraAskAI() {
   const navigate = useNavigate()
 
   /* ── Refs ── */
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const muteGainRef = useRef<GainNode | null>(null)
+  const audioChunksRef = useRef<Float32Array[]>([])
+  const captureActiveRef = useRef(false)
+  const processingRef = useRef(false)
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isSpeakingRef = useRef(false)
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
@@ -205,9 +266,6 @@ export default function CameraAskAI() {
   const speak = useCallback((text: string) => {
     speechSynthesis.cancel()
 
-    // Stop recognition while speaking to prevent echo
-    try { recognitionRef.current?.stop() } catch { /* ok */ }
-
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.rate = 0.95
     utterance.pitch = 1.0
@@ -221,31 +279,20 @@ export default function CameraAskAI() {
     }
     utterance.onend = () => {
       isSpeakingRef.current = false
-      setState('listening')
-      // Restart recognition after a short gap so mic doesn't catch tail-end audio
-      setTimeout(() => {
-        if (recognitionRef.current) {
-          try { recognitionRef.current.start() } catch { /* already running */ }
-        }
-      }, 400)
+      setState(micEnabled ? 'listening' : 'idle')
     }
     utterance.onerror = () => {
       isSpeakingRef.current = false
-      setState('listening')
-      setTimeout(() => {
-        if (recognitionRef.current) {
-          try { recognitionRef.current.start() } catch { /* already running */ }
-        }
-      }, 400)
+      setState(micEnabled ? 'listening' : 'idle')
     }
 
     speechSynthesis.speak(utterance)
-  }, [])
+  }, [micEnabled])
 
   /* ── Ask AI ── */
   const askAI = useCallback(async (prompt: string) => {
+    processingRef.current = true
     setState('processing')
-    setTranscript('')
 
     try {
       // Get the latest frame for AI analysis
@@ -290,129 +337,203 @@ export default function CameraAskAI() {
     } catch (error: unknown) {
       console.error('AI error:', error)
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
-      setState('listening')
+      setState(micEnabled ? 'listening' : 'idle')
+    } finally {
+      processingRef.current = false
     }
-  }, [speak, mjpegUrl])
+  }, [speak, mjpegUrl, micEnabled])
 
-  /* ── Speech Recognition ── */
+  const clearSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+  }, [])
+
+  const transcribeSegment = useCallback(async (samples: Float32Array, sampleRate: number) => {
+    const wavAudio = encodeWavBase64(samples, sampleRate, STT_TARGET_SAMPLE_RATE)
+    const res = await fetch('/api/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: wavAudio }),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(errText || `STT error ${res.status}`)
+    }
+
+    const data = await res.json()
+    return (data.text as string | undefined)?.trim() || ''
+  }, [])
+
+  const flushCapturedAudio = useCallback(async () => {
+    clearSilenceTimer()
+
+    if (!captureActiveRef.current || processingRef.current || isSpeakingRef.current) {
+      return
+    }
+
+    captureActiveRef.current = false
+    const chunks = audioChunksRef.current
+    audioChunksRef.current = []
+
+    const context = audioContextRef.current
+    if (!context || chunks.length === 0) {
+      return
+    }
+
+    const merged = concatFloat32Chunks(chunks)
+    const durationMs = (merged.length / context.sampleRate) * 1000
+    if (durationMs < STT_MIN_AUDIO_MS) {
+      setTranscript('')
+      setState(micEnabled ? 'listening' : 'idle')
+      return
+    }
+
+    try {
+      setState('processing')
+      const text = await transcribeSegment(merged, context.sampleRate)
+      if (!text) {
+        setTranscript('')
+        setState(micEnabled ? 'listening' : 'idle')
+        return
+      }
+
+      const words = text.split(/\s+/).filter(Boolean).length
+      if (words < STT_MIN_WORDS || text.length < STT_MIN_CHARS) {
+        setTranscript('')
+        setState(micEnabled ? 'listening' : 'idle')
+        return
+      }
+
+      setTranscript(text)
+      await askAI(text)
+    } catch (error: unknown) {
+      console.error('STT error:', error)
+      setLastAnswer(`Error: ${getErrorMessage(error)}`)
+      setState(micEnabled ? 'listening' : 'idle')
+    }
+  }, [askAI, clearSilenceTimer, micEnabled, transcribeSegment])
+
+  /* ── Offline STT Capture ── */
   useEffect(() => {
     if (!micEnabled) {
-      recognitionRef.current?.stop()
+      clearSilenceTimer()
+      captureActiveRef.current = false
+      audioChunksRef.current = []
+
+      audioProcessorRef.current?.disconnect()
+      audioSourceRef.current?.disconnect()
+      muteGainRef.current?.disconnect()
+      audioStreamRef.current?.getTracks().forEach(track => track.stop())
+      void audioContextRef.current?.close()
+
+      audioProcessorRef.current = null
+      audioSourceRef.current = null
+      muteGainRef.current = null
+      audioStreamRef.current = null
+      audioContextRef.current = null
       setState('idle')
       return
     }
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setCameraError('Speech recognition is not supported in this browser.')
+    const AudioContextCtor = getAudioContextCtor()
+    if (!AudioContextCtor || !navigator.mediaDevices?.getUserMedia) {
+      setLastAnswer('Error: Microphone capture is not supported in this browser.')
+      setState('error')
       return
     }
 
-    const recognition = new SpeechRecognition()
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-    recognition.maxAlternatives = 1
-    recognitionRef.current = recognition
+    let cancelled = false
 
-    let silenceTimer: ReturnType<typeof setTimeout> | null = null
-    let accumulated = ''                // buffer for final fragments
-    let lastInterim = ''                // fallback if isFinal never fires
-    let processingLock = false           // prevent double-sends
-    const SILENCE_MS = 1800             // 1.8s silence → utterance is done
-    const MIN_WORDS = 2
-    const MIN_CHARS = 8
-    const CONFIDENCE_FLOOR = 0.2        // low threshold — let most speech through
-
-    /** Flush the buffer: if it looks like a real question, send to AI. */
-    const flush = () => {
-      if (processingLock || isSpeakingRef.current) return
-      let text = accumulated.trim()
-      if (!text && lastInterim.trim()) text = lastInterim.trim()
-      accumulated = ''
-      lastInterim = ''
-      if (!text) return
-
-      const words = text.split(/\s+/).length
-      if (words < MIN_WORDS || text.length < MIN_CHARS) {
-        setTranscript('')
-        return
-      }
-      processingLock = true
-      askAI(text).finally(() => { processingLock = false })
-    }
-
-    const clearSilenceTimer = () => {
-      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
-    }
-    const resetSilenceTimer = (ms: number) => {
-      clearSilenceTimer()
-      silenceTimer = setTimeout(flush, ms)
-    }
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      if (isSpeakingRef.current || processingLock) return
-
-      let interim = ''
-      let newFinal = ''
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const r = event.results[i]
-        if (r.isFinal) {
-          if (r[0].confidence > CONFIDENCE_FLOOR) newFinal += r[0].transcript
-        } else {
-          interim += r[0].transcript
+    const startCapture = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop())
+          return
         }
-      }
 
-      if (newFinal) {
-        accumulated += newFinal
-        lastInterim = ''
-        setTranscript(accumulated)
-        resetSilenceTimer(1200)
-      }
+        const context = new AudioContextCtor()
+        await context.resume()
 
-      if (interim) {
-        lastInterim = interim
-        setTranscript(accumulated ? accumulated + ' ' + interim : interim)
-        resetSilenceTimer(SILENCE_MS)
+        const source = context.createMediaStreamSource(stream)
+        const processor = context.createScriptProcessor(4096, 1, 1)
+        const muteGain = context.createGain()
+        muteGain.gain.value = 0
+
+        source.connect(processor)
+        processor.connect(muteGain)
+        muteGain.connect(context.destination)
+
+        audioStreamRef.current = stream
+        audioContextRef.current = context
+        audioSourceRef.current = source
+        audioProcessorRef.current = processor
+        muteGainRef.current = muteGain
+        setState('listening')
+
+        processor.onaudioprocess = (event) => {
+          if (!micEnabled || processingRef.current || isSpeakingRef.current) {
+            return
+          }
+
+          const input = event.inputBuffer.getChannelData(0)
+          const chunk = new Float32Array(input)
+          const sumSquares = chunk.reduce((sum, sample) => sum + sample * sample, 0)
+          const rms = Math.sqrt(sumSquares / chunk.length)
+          const hasSpeech = rms >= STT_RMS_THRESHOLD
+
+          if (hasSpeech && !captureActiveRef.current) {
+            captureActiveRef.current = true
+            audioChunksRef.current = []
+          }
+
+          if (captureActiveRef.current) {
+            audioChunksRef.current.push(chunk)
+          }
+
+          if (hasSpeech) {
+            clearSilenceTimer()
+            silenceTimerRef.current = setTimeout(() => {
+              void flushCapturedAudio()
+            }, STT_SILENCE_MS)
+          }
+        }
+      } catch (error: unknown) {
+        console.error('Microphone setup failed:', error)
+        setLastAnswer(`Error: ${getErrorMessage(error)}`)
+        setState('error')
       }
     }
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return
-      console.warn('Speech recognition error:', event.error)
-    }
-
-    recognition.onend = () => {
-      // Flush remaining text only if not already processing/speaking
-      if (accumulated.trim() && !processingLock && !isSpeakingRef.current) {
-        clearSilenceTimer()
-        flush()
-      } else {
-        accumulated = ''
-        lastInterim = ''
-      }
-
-      // Auto-restart unless mic is disabled or we're speaking
-      if (micEnabled && !isSpeakingRef.current) {
-        try { recognition.start() } catch { /* already started */ }
-      }
-    }
-
-    try {
-      recognition.start()
-      setState('listening')
-    } catch (err) {
-      console.warn('Could not start speech recognition:', err)
-    }
+    void startCapture()
 
     return () => {
+      cancelled = true
       clearSilenceTimer()
-      recognition.onend = null
-      recognition.stop()
+      captureActiveRef.current = false
+      audioChunksRef.current = []
+      audioProcessorRef.current?.disconnect()
+      audioSourceRef.current?.disconnect()
+      muteGainRef.current?.disconnect()
+      audioStreamRef.current?.getTracks().forEach(track => track.stop())
+      void audioContextRef.current?.close()
+      audioProcessorRef.current = null
+      audioSourceRef.current = null
+      muteGainRef.current = null
+      audioStreamRef.current = null
+      audioContextRef.current = null
     }
-  }, [micEnabled, askAI])
+  }, [clearSilenceTimer, flushCapturedAudio, micEnabled])
 
   /* ── Ensure voices are loaded ── */
   useEffect(() => {
