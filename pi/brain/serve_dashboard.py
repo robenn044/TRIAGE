@@ -274,6 +274,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+
 def main():
     load_env_file(ENV_FILE)
 
@@ -301,7 +305,7 @@ def main():
                 f.write(html)
             print("Injected camera URL into index.html")
 
-    with socketserver.TCPServer(("0.0.0.0", PORT), DashboardHandler) as httpd:
+    with ReusableTCPServer(("0.0.0.0", PORT), DashboardHandler) as httpd:
         print(f"Dashboard serving on http://localhost:{PORT}")
         print(f"Camera stream: http://localhost:8085/stream")
         print("Local AI:      POST http://localhost:3000/api/ask")
