@@ -56,6 +56,8 @@ deactivate
 
 The dashboard server now prefers `piper` for a more natural offline English voice and falls back to `espeak-ng` if Piper is unavailable. The default Piper voice is `en_US-lessac-medium`.
 
+For a more human-sounding English voice, TRIAGE can also use Kokoro. The preferred Kokoro voice is `af_sarah`.
+
 ## 6. Configure AI keys
 
 Create `~/TRIAGE/.env.local`:
@@ -118,6 +120,30 @@ Check local TTS:
 curl http://localhost:3000/api/speak \
   -H "Content-Type: application/json" \
   -d '{"text":"This is a Triage speaker test."}'
+```
+
+Optional: install Kokoro for a more natural English voice:
+
+```bash
+cd ~/TRIAGE/pi/brain
+source venv/bin/activate
+pip install kokoro-onnx soundfile
+deactivate
+mkdir -p ~/kokoro-tts
+cd ~/kokoro-tts
+curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+```
+
+Optional Kokoro overrides in `~/TRIAGE/.env.local`:
+
+```env
+TRIAGE_TTS_ENGINE=kokoro
+TRIAGE_KOKORO_MODEL=/home/admin/kokoro-tts/kokoro-v1.0.onnx
+TRIAGE_KOKORO_VOICES=/home/admin/kokoro-tts/voices-v1.0.bin
+TRIAGE_KOKORO_VOICE=af_sarah
+TRIAGE_KOKORO_LANG=en-us
+TRIAGE_KOKORO_SPEED=1.0
 ```
 
 Download the latest generated response WAV:

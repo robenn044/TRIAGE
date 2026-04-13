@@ -45,6 +45,11 @@ DEFAULT_TTS_VOICE = "en-us"
 DEFAULT_TTS_SPEED = "165"
 DEFAULT_PIPER_MODEL = "en_US-lessac-medium"
 DEFAULT_PIPER_DOWNLOAD_DIR = os.path.expanduser("~/piper-voices")
+DEFAULT_KOKORO_MODEL = os.path.expanduser("~/kokoro-tts/kokoro-v1.0.onnx")
+DEFAULT_KOKORO_VOICES = os.path.expanduser("~/kokoro-tts/voices-v1.0.bin")
+DEFAULT_KOKORO_VOICE = "af_sarah"
+DEFAULT_KOKORO_LANG = "en-us"
+DEFAULT_KOKORO_SPEED = "1.0"
 LAST_TTS_WAV = os.path.join(tempfile.gettempdir(), "triage-last-response.wav")
 SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
@@ -347,6 +352,17 @@ def find_piper_binary():
     return None
 
 
+def find_dashboard_python():
+    candidates = [
+        os.path.join(REPO_DIR, "pi", "brain", "venv", "bin", "python"),
+        sys.executable,
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return sys.executable
+
+
 def generate_tts_wav_espeak(text: str, output_path: str):
     tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
     tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
@@ -400,10 +416,52 @@ def generate_tts_wav_piper(text: str, output_path: str):
     return "piper"
 
 
-def generate_tts_wav(text: str, output_path: str):
-    preferred_engine = os.environ.get("TRIAGE_TTS_ENGINE", "piper").lower()
+def generate_tts_wav_kokoro(text: str, output_path: str):
+    model_path = os.environ.get("TRIAGE_KOKORO_MODEL", DEFAULT_KOKORO_MODEL)
+    voices_path = os.environ.get("TRIAGE_KOKORO_VOICES", DEFAULT_KOKORO_VOICES)
+    helper_path = os.path.join(REPO_DIR, "pi", "brain", "kokoro_generate.py")
 
-    if preferred_engine == "piper":
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Kokoro model not found at {model_path}")
+    if not os.path.exists(voices_path):
+        raise FileNotFoundError(f"Kokoro voices file not found at {voices_path}")
+    if not os.path.exists(helper_path):
+        raise FileNotFoundError(f"Kokoro helper not found at {helper_path}")
+
+    cmd = [
+        find_dashboard_python(),
+        helper_path,
+        "--model", model_path,
+        "--voices", voices_path,
+        "--voice", os.environ.get("TRIAGE_KOKORO_VOICE", DEFAULT_KOKORO_VOICE),
+        "--lang", os.environ.get("TRIAGE_KOKORO_LANG", DEFAULT_KOKORO_LANG),
+        "--speed", os.environ.get("TRIAGE_KOKORO_SPEED", DEFAULT_KOKORO_SPEED),
+        "--output", output_path,
+        text,
+    ]
+    completed = subprocess.run(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Failed to generate Kokoro wav")
+    return "kokoro-onnx"
+
+
+def generate_tts_wav(text: str, output_path: str):
+    preferred_engine = os.environ.get("TRIAGE_TTS_ENGINE", "kokoro").lower()
+
+    if preferred_engine == "kokoro":
+        try:
+            return generate_tts_wav_kokoro(text, output_path)
+        except Exception as exc:
+            print(f"Kokoro TTS unavailable, falling back to Piper: {exc}")
+
+    if preferred_engine in ("kokoro", "piper"):
         try:
             return generate_tts_wav_piper(text, output_path)
         except Exception as exc:
