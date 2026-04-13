@@ -1,7 +1,7 @@
 [Unit]
 Description=TRIAGE Local Dashboard Server (Brain Pi)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target triage-camera-brain.service
+Wants=network-online.target triage-camera-brain.service
 
 [Service]
 Type=simple

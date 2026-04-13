@@ -120,28 +120,20 @@ def main():
         with open(index_path, "r") as f:
             html = f.read()
         
-        # Inject script if not already present
-        if "__TRIAGE_CAMERA_URL" not in html or "__TRIAGE_MIC_URL" not in html:
+        if "__TRIAGE_CAMERA_URL" not in html:
             inject = (
                 '<script>'
-                'window.__TRIAGE_CAMERA_URL="http://triageface.local:8085/stream";'
-                'window.__TRIAGE_MIC_URL="http://triageface.local:8086/stream";'
+                'window.__TRIAGE_CAMERA_URL="http://localhost:8085/stream";'
                 '</script>'
             )
-            # Remove old injection if only camera was there
-            if "__TRIAGE_CAMERA_URL" in html and "__TRIAGE_MIC_URL" not in html:
-                import re
-                html = re.sub(r'<script>window.__TRIAGE_CAMERA_URL=.*?</script>', '', html)
-
             html = html.replace("</head>", f"{inject}</head>", 1)
             with open(index_path, "w") as f:
                 f.write(html)
-            print(f"Injected camera and microphone URLs into index.html")
+            print("Injected camera URL into index.html")
 
     with socketserver.TCPServer(("0.0.0.0", PORT), DashboardHandler) as httpd:
         print(f"Dashboard serving on http://localhost:{PORT}")
-        print(f"Camera stream: http://triageface.local:8085/stream")
-        print(f"Mic stream:    http://triageface.local:8086/stream")
+        print(f"Camera stream: http://localhost:8085/stream")
 
 
 if __name__ == "__main__":
