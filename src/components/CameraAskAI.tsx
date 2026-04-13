@@ -242,8 +242,8 @@ export default function CameraAskAI() {
     speechSynthesis.speak(utterance)
   }, [])
 
-  /* ── Ask Groq ── */
-  const askGroq = useCallback(async (prompt: string) => {
+  /* ── Ask AI ── */
+  const askAI = useCallback(async (prompt: string) => {
     setState('processing')
     setTranscript('')
 
@@ -288,11 +288,11 @@ export default function CameraAskAI() {
       setLastAnswer(answer)
       speak(answer)
     } catch (error: unknown) {
-      console.error('Groq error:', error)
+      console.error('AI error:', error)
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
       setState('listening')
     }
-  }, [speak])
+  }, [speak, mjpegUrl])
 
   /* ── Speech Recognition ── */
   useEffect(() => {
@@ -324,7 +324,7 @@ export default function CameraAskAI() {
     const MIN_CHARS = 8
     const CONFIDENCE_FLOOR = 0.2        // low threshold — let most speech through
 
-    /** Flush the buffer: if it looks like a real question, send to Groq. */
+    /** Flush the buffer: if it looks like a real question, send to AI. */
     const flush = () => {
       if (processingLock || isSpeakingRef.current) return
       let text = accumulated.trim()
@@ -339,7 +339,7 @@ export default function CameraAskAI() {
         return
       }
       processingLock = true
-      askGroq(text).finally(() => { processingLock = false })
+      askAI(text).finally(() => { processingLock = false })
     }
 
     const clearSilenceTimer = () => {
@@ -412,7 +412,7 @@ export default function CameraAskAI() {
       recognition.onend = null
       recognition.stop()
     }
-  }, [micEnabled, askGroq])
+  }, [micEnabled, askAI])
 
   /* ── Ensure voices are loaded ── */
   useEffect(() => {

@@ -4,7 +4,7 @@ TRIAGE is a voice-first tourist kiosk web app built for a Raspberry Pi 5 with a 
 
 ## Features
 
-- Always-listening camera assistant with webcam capture, Groq vision responses, and natural text-to-speech
+- Always-listening camera assistant with webcam capture, Gemma 4 vision responses, and natural text-to-speech
 - Personalized itinerary planner tailored to city, interests, travel style, and group type
 - In-app maps view plus recommendation links that open Google Maps for selected places
 - Kiosk-friendly UI optimized for compact landscape displays
@@ -14,8 +14,8 @@ TRIAGE is a voice-first tourist kiosk web app built for a Raspberry Pi 5 with a 
 
 - React + Vite + TypeScript
 - Tailwind CSS + shadcn/ui
-- Groq API for vision + itinerary generation
-- Vercel serverless function for production API proxy
+- Google AI Studio (Gemma 4) for vision + itinerary generation
+- Vercel serverless function for production AI proxy (supports Ollama fallback)
 
 ## Local Development
 
@@ -31,13 +31,20 @@ TRIAGE is a voice-first tourist kiosk web app built for a Raspberry Pi 5 with a 
    cp .env.example .env.local
    ```
 
-3. Set your Groq key in `.env.local`:
+3. Set your Google AI key in `.env.local`:
 
    ```env
-   GROQ_API_KEY=your_groq_api_key_here
+   GEMINI_API_KEY=your_google_ai_studio_key_here
    ```
 
-4. Start the app:
+4. (Optional) Run Ollama locally with Gemma 4:
+
+   ```env
+   OLLAMA_BASE_URL=http://localhost:11434
+   OLLAMA_MODEL=gemma4
+   ```
+
+5. Start the app:
 
    ```bash
    npm run dev
@@ -46,7 +53,7 @@ TRIAGE is a voice-first tourist kiosk web app built for a Raspberry Pi 5 with a 
 ## Vercel Deployment
 
 1. Import this repository into Vercel.
-2. Add the environment variable `GROQ_API_KEY`.
+2. Add the environment variable `GEMINI_API_KEY`.
 3. Deploy normally — `vercel.json` handles the SPA rewrite and API route behavior.
 
 ## Raspberry Pi Kiosk Launch
@@ -67,4 +74,4 @@ npm run build
 
 - Do not commit `.env.local` or real API keys.
 - The app uses the rear/environment camera where available.
-- In local development, `vite.config.ts` proxies `/api/ask` so Groq requests work without Vercel.
+- In local development, `vite.config.ts` proxies `/api/ask` to Google AI Studio or Ollama.
