@@ -183,6 +183,25 @@ def extract_transcript(cli_output: str):
     return " ".join(fallback_lines[-3:]).strip()
 
 
+def collect_text_fields(value):
+    """Recursively collect non-empty 'text' values from whisper.cpp JSON output."""
+    texts = []
+
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key == "text" and isinstance(nested, str):
+                cleaned = nested.strip()
+                if cleaned:
+                    texts.append(cleaned)
+            else:
+                texts.extend(collect_text_fields(nested))
+    elif isinstance(value, list):
+        for item in value:
+            texts.extend(collect_text_fields(item))
+
+    return texts
+
+
 def run_local_stt(audio_b64: str):
     whisper_bin = os.environ.get("WHISPER_CPP_BIN", DEFAULT_WHISPER_BIN)
     whisper_model = os.environ.get("WHISPER_MODEL", DEFAULT_WHISPER_MODEL)
@@ -201,6 +220,7 @@ def run_local_stt(audio_b64: str):
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
         temp_audio.write(audio_bytes)
         wav_path = temp_audio.name
+    output_prefix = wav_path[:-4]
 
     try:
         cmd = [
@@ -209,6 +229,8 @@ def run_local_stt(audio_b64: str):
             "-f", wav_path,
             "-l", "en",
             "-t", str(whisper_threads),
+            "-oj",
+            "-of", output_prefix,
         ]
         completed = subprocess.run(
             cmd,
@@ -223,13 +245,27 @@ def run_local_stt(audio_b64: str):
                 f"{completed.stderr.strip() or completed.stdout.strip()}"
             )
 
-        transcript = extract_transcript(completed.stdout)
+        json_path = f"{output_prefix}.json"
+        transcript = ""
+
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                json_payload = json.load(f)
+            text_parts = collect_text_fields(json_payload)
+            transcript = " ".join(text_parts).strip()
+
+        if not transcript:
+            transcript = extract_transcript(completed.stdout)
         if not transcript:
             raise RuntimeError("whisper-cli returned no transcript text")
         return transcript
     finally:
         try:
             os.unlink(wav_path)
+        except FileNotFoundError:
+            pass
+        try:
+            os.unlink(f"{output_prefix}.json")
         except FileNotFoundError:
             pass
 
