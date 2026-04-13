@@ -26,6 +26,7 @@ import urllib.request
 import urllib.error
 import json
 import re
+import time
 
 PORT = 3000
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "dist")
@@ -46,6 +47,10 @@ SYSTEM_INSTRUCTION = (
     "Do not show your reasoning, bullet points, or internal analysis unless the user asks for them. "
     "Be warm, informative, and focus on what would interest a tourist."
 )
+
+
+transcript_counter = 0
+transcript_queue = []
 
 
 def load_env_file(path: str):
@@ -280,6 +285,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=DIST_DIR, **kwargs)
 
     def do_GET(self):
+        if self.path == "/api/transcript":
+            self._handle_transcript_get()
+            return
         # Proxy non-local API calls to Vercel
         if self.path.startswith("/api/"):
             self._proxy_to_vercel("GET")
@@ -297,6 +305,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/ask":
             self._handle_local_ask()
+            return
+        if self.path == "/api/transcript":
+            self._handle_transcript_post()
             return
         if self.path == "/api/stt":
             self._handle_local_stt()
@@ -379,6 +390,46 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         json_response(self, 200, {"text": transcript, "provider": "whisper.cpp"})
 
+    def _handle_transcript_post(self):
+        """Accept transcript text from a PC-side STT sender."""
+        global transcript_counter, transcript_queue
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            json_response(self, 400, {"error": "Invalid JSON body"})
+            return
+
+        text = payload.get("text")
+        source = payload.get("source", "pc-stt")
+        if not isinstance(text, str) or not text.strip():
+            json_response(self, 400, {"error": "text is required"})
+            return
+
+        transcript_counter += 1
+        item = {
+            "id": transcript_counter,
+            "text": text.strip(),
+            "source": source,
+            "timestamp": time.time(),
+        }
+        transcript_queue.append(item)
+        print(f"Transcript received [{source}]: {item['text'][:120]}")
+        json_response(self, 200, {"ok": True, **item})
+
+    def _handle_transcript_get(self):
+        """Return and consume the next pending transcript."""
+        global transcript_queue
+
+        if not transcript_queue:
+            json_response(self, 200, {"id": None, "text": None})
+            return
+
+        item = transcript_queue.pop(0)
+        json_response(self, 200, item)
+
     def _proxy_to_vercel(self, method: str):
         """Forward /api/* requests to Vercel."""
         target_url = VERCEL_BASE + self.path
@@ -460,6 +511,7 @@ def main():
         print(f"Camera stream: http://localhost:8085/stream")
         print("Local AI:      POST http://localhost:3000/api/ask")
         print("Local STT:     POST http://localhost:3000/api/stt")
+        print("Transcript:    GET/POST http://localhost:3000/api/transcript")
         print("Other /api/* requests still proxy to Vercel")
         httpd.serve_forever()
 

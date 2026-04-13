@@ -3,10 +3,11 @@
 This setup assumes:
 
 - the webcam is plugged into the Brain Pi
-- Chromium on the Brain Pi uses the webcam microphone directly for capture
+- camera video stays on the Brain Pi
+- speech-to-text runs on your PC and sends transcript text to the Brain Pi
 - the dashboard opens automatically on boot
 - the local dashboard server handles `POST /api/ask` for Gemma 4 or Ollama
-- the local dashboard server handles `POST /api/stt` for offline speech-to-text
+- the local dashboard server handles `GET/POST /api/transcript` for transcript relay
 
 ## 1. Hardware
 
@@ -69,32 +70,6 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4
 ```
 
-## 6b. Install Offline STT with whisper.cpp
-
-Official upstream project:
-
-- [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp)
-
-Install it with the helper script:
-
-```bash
-cd ~/TRIAGE/pi/brain
-chmod +x install_whisper_cpp.sh
-./install_whisper_cpp.sh
-```
-
-This follows the upstream quick-start flow:
-
-- clone `whisper.cpp`
-- build `whisper-cli`
-- download `ggml-base.en.bin`
-
-If you want a different model later:
-
-```bash
-WHISPER_MODEL_NAME=small.en ./install_whisper_cpp.sh
-```
-
 ## 7. Install systemd services
 
 ```bash
@@ -135,12 +110,12 @@ curl http://localhost:3000/api/ask \
   -d '{"prompt":"Say hello as Triage in one sentence."}'
 ```
 
-Check local offline STT:
+Check transcript relay:
 
 ```bash
-curl http://localhost:3000/api/stt \
+curl http://localhost:3000/api/transcript \
   -H "Content-Type: application/json" \
-  -d '{"audio":"BASE64_WAV_GOES_HERE"}'
+  -d '{"text":"Hello Triage, tell me about this place.","source":"manual-test"}'
 ```
 
 Check Arduino:
@@ -159,30 +134,43 @@ sudo systemctl status triage-dashboard-kiosk --no-pager
 sudo systemctl status triage-brain --no-pager
 ```
 
-## 10. Chromium microphone and camera permissions
+## 10. Chromium permissions
 
 On first launch in Chromium:
 
-- allow microphone
 - allow camera
-- confirm the webcam microphone is the active input device
 
 If needed, test in Chromium at:
 
 - `http://localhost:3000/dashboard`
 
-## 11. Full end-to-end test
+## 11. PC transcript sender test
+
+From your PC:
+
+```bash
+python pc/send_transcript.py --pi http://TRIAGE_PI_IP:3000 "Hello Triage, what can I see here?"
+```
+
+The Brain Pi dashboard should:
+
+- switch to `Thinking...`
+- send the text to local `/api/ask`
+- show the answer on screen
+- speak the answer on the Pi speakers
+
+## 12. Full end-to-end test
 
 1. Reboot the Brain Pi.
 2. Wait for Chromium to open `http://localhost:3000/dashboard`.
 3. Confirm live video appears.
-4. Speak clearly near the webcam microphone.
-5. Confirm transcript appears in the dashboard.
+4. From your PC, send a test transcript to the Pi.
+5. Confirm the transcript appears in the dashboard.
 6. Confirm Gemma 4 returns an answer.
 7. Confirm the browser speaks the answer through the Pi audio output.
 8. Test robot controls and `End Trip`.
 
-## 12. Logs if something fails
+## 13. Logs if something fails
 
 ```bash
 journalctl -u triage-camera-brain -n 100 --no-pager
@@ -193,6 +181,6 @@ journalctl -u triage-brain -n 100 --no-pager
 
 ## Notes
 
-- Browser STT capture is hardware-direct and the transcription runs locally via `whisper.cpp`.
 - `camera.py` runs on the Brain Pi for lowest possible dashboard latency.
-- `/api/ask` and `/api/stt` are served locally by `serve_dashboard.py`.
+- `/api/ask` and `/api/transcript` are served locally by `serve_dashboard.py`.
+- Your PC can use any STT tool you like as long as it sends plain text to `POST /api/transcript`.
