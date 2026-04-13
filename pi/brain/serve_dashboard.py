@@ -5,8 +5,9 @@ TRIAGE — Local Dashboard Server (Brain Pi)
 Serves the pre-built Vite dashboard from dist/ on port 3000.
 This replaces Vercel for the Brain Pi's local screen, giving:
   - Zero-latency page loads (no internet round trip)
-  - Access to Face Pi MJPEG stream without mixed-content blocking
-  - API calls still go to Vercel (proxied transparently)
+  - Access to the localhost camera stream
+  - Local /api/ask for Gemma 4 or Ollama without leaving the Pi
+  - Remaining /api/* routes can still proxy to Vercel when needed
 
 Usage:
     python serve_dashboard.py
@@ -21,22 +22,146 @@ import sys
 import urllib.request
 import urllib.error
 import json
+import re
 
 PORT = 3000
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "dist")
 VERCEL_BASE = "https://triage-ashy.vercel.app"
+REPO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+ENV_FILE = os.path.join(REPO_DIR, ".env.local")
+
+GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+DEFAULT_GEMINI_MODEL = "gemma-4-26b-a4b-it"
+DEFAULT_OLLAMA_MODEL = "gemma4"
+SYSTEM_INSTRUCTION = (
+    "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
+    "When shown an image, describe what you see and answer the tourist's question concisely. "
+    "Keep answers under 3 sentences unless more detail is clearly needed. "
+    "Be warm, informative, and focus on what would interest a tourist."
+)
+
+
+def load_env_file(path: str):
+    """Load key=value lines from .env.local without overriding real environment vars."""
+    if not os.path.exists(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+def json_response(handler: http.server.BaseHTTPRequestHandler, status: int, payload: dict):
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def try_ollama(prompt: str, image: str | None, max_tokens: int):
+    base_url = os.environ.get("OLLAMA_BASE_URL")
+    if not base_url:
+        return None
+
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+    if image:
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
+            ],
+        })
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/chat/completions",
+        data=json.dumps({
+            "model": os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            answer = data.get("choices", [{}])[0].get("message", {}).get("content")
+            return {"answer": answer, "provider": "ollama"} if answer else None
+    except Exception as e:
+        print(f"Ollama unavailable: {e}")
+        return None
+
+
+def try_google_ai(prompt: str, image: str | None, max_tokens: int):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    parts: list[dict] = [{"text": prompt}]
+    if image:
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": image,
+            },
+        })
+
+    req = urllib.request.Request(
+        f"{GOOGLE_AI_URL}/{model}:generateContent?key={api_key}",
+        data=json.dumps({
+            "system_instruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": 0.7,
+            },
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            answer = (
+                data.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text")
+            )
+            return {"answer": answer, "provider": "google-ai-studio"} if answer else None
+    except urllib.error.HTTPError as e:
+        print(f"Google AI error: {e.code} {e.read().decode('utf-8', errors='ignore')[:200]}")
+        return None
+    except Exception as e:
+        print(f"Google AI unavailable: {e}")
+        return None
 
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """
-    Serves static files from dist/ and proxies /api/* requests to Vercel.
+    Serves static files from dist/, handles /api/ask locally, and proxies the
+    remaining /api/* routes to Vercel when needed.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIST_DIR, **kwargs)
 
     def do_GET(self):
-        # Proxy API calls to Vercel
+        # Proxy non-local API calls to Vercel
         if self.path.startswith("/api/"):
             self._proxy_to_vercel("GET")
             return
@@ -51,6 +176,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/ask":
+            self._handle_local_ask()
+            return
         if self.path.startswith("/api/"):
             self._proxy_to_vercel("POST")
             return
@@ -62,6 +190,44 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def _handle_local_ask(self):
+        """Handle /api/ask locally so kiosk mode does not depend on Vercel."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            json_response(self, 400, {"error": "Invalid JSON body"})
+            return
+
+        prompt = payload.get("prompt")
+        image = payload.get("image")
+        max_tokens = payload.get("max_tokens", 300)
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            json_response(self, 400, {"error": "prompt is required"})
+            return
+
+        if not isinstance(max_tokens, int):
+            max_tokens = 300
+
+        result = try_ollama(prompt, image, max_tokens)
+        if not result:
+            result = try_google_ai(prompt, image, max_tokens)
+
+        if not result:
+            json_response(
+                self,
+                503,
+                {
+                    "error": "AI unavailable",
+                    "hint": "Check OLLAMA_BASE_URL or GEMINI_API_KEY in .env.local",
+                },
+            )
+            return
+
+        json_response(self, 200, result)
 
     def _proxy_to_vercel(self, method: str):
         """Forward /api/* requests to Vercel."""
@@ -109,6 +275,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
+    load_env_file(ENV_FILE)
+
     if not os.path.isdir(DIST_DIR):
         print(f"ERROR: dist/ not found at {DIST_DIR}")
         print("Run 'npm run build' first, then copy dist/ to the Pi.")
@@ -117,23 +285,28 @@ def main():
     # Inject MJPEG stream and Mic stream URLs into the built index.html
     index_path = os.path.join(DIST_DIR, "index.html")
     if os.path.exists(index_path):
-        with open(index_path, "r") as f:
+        with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
-        
+
+        inject = (
+            '<script>'
+            'window.__TRIAGE_CAMERA_URL="http://localhost:8085/stream";'
+            '</script>'
+        )
+        html = re.sub(r"<script>window\.__TRIAGE_CAMERA_URL=.*?</script>", "", html)
+        html = re.sub(r"<script>window\.__TRIAGE_MIC_URL=.*?</script>", "", html)
         if "__TRIAGE_CAMERA_URL" not in html:
-            inject = (
-                '<script>'
-                'window.__TRIAGE_CAMERA_URL="http://localhost:8085/stream";'
-                '</script>'
-            )
             html = html.replace("</head>", f"{inject}</head>", 1)
-            with open(index_path, "w") as f:
+            with open(index_path, "w", encoding="utf-8") as f:
                 f.write(html)
             print("Injected camera URL into index.html")
 
     with socketserver.TCPServer(("0.0.0.0", PORT), DashboardHandler) as httpd:
         print(f"Dashboard serving on http://localhost:{PORT}")
         print(f"Camera stream: http://localhost:8085/stream")
+        print("Local AI:      POST http://localhost:3000/api/ask")
+        print("Other /api/* requests still proxy to Vercel")
+        httpd.serve_forever()
 
 
 if __name__ == "__main__":

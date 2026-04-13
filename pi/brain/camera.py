@@ -132,13 +132,20 @@ def start_lan_server():
 async def capture_loop():
     global latest_frame_jpeg
 
-    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    cap = None
+    for backend_name, backend in (("V4L2", cv2.CAP_V4L2), ("default", cv2.CAP_ANY)):
+        candidate = cv2.VideoCapture(CAMERA_INDEX, backend)
+        candidate.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        candidate.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        candidate.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
+        candidate.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        if candidate.isOpened():
+            cap = candidate
+            logger.info("Camera opened with %s backend", backend_name)
+            break
+        candidate.release()
 
-    if not cap.isOpened():
+    if cap is None:
         logger.error("Failed to open camera at index %d", CAMERA_INDEX)
         sys.exit(1)
 

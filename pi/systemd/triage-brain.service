@@ -13,7 +13,7 @@ RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
 # Safety: stop motors if the service crashes
-ExecStopPost=/usr/bin/python3 -c "import serial,json;s=serial.Serial('/dev/ttyACM0',115200,timeout=1);s.write(json.dumps({'cmd':'STOP'}).encode()+'\\n'.encode());s.close()"
+ExecStopPost=/usr/bin/python3 -c "import serial,json;s=serial.Serial('/dev/ttyUSB0',115200,timeout=1);s.write(json.dumps({'cmd':'STOP'}).encode()+b'\\n');s.close()"
 
 [Install]
 WantedBy=multi-user.target

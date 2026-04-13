@@ -8,7 +8,7 @@ Type=simple
 User=admin
 Environment=DISPLAY=:0
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --no-first-run http://localhost:3000/dashboard
+ExecStart=/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --no-first-run --use-fake-ui-for-media-stream --autoplay-policy=no-user-gesture-required http://localhost:3000/dashboard
 Restart=on-failure
 RestartSec=10
 

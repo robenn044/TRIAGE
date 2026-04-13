@@ -33,7 +33,7 @@ from config import (
     ARDUINO_PORT,
     ARDUINO_BAUD,
     FACE_PI_CAMERA_URL,
-    VERCEL_ASK_URL,
+    ASK_API_URL,
     VERCEL_ROBOT_COMMAND_URL,
     VERCEL_ROBOT_STATE_URL,
     NAV_KP, NAV_KI, NAV_KD,
@@ -383,13 +383,13 @@ class RobotBrain:
     # ── AI Narration ───────────────────────────────────────
 
     async def _get_ai_narration(self, frame: np.ndarray, prompt: str) -> Optional[str]:
-        """Send frame + prompt to Vercel /api/ask for AI narration."""
+        """Send frame + prompt to the local /api/ask endpoint for AI narration."""
         try:
             _, jpeg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             b64_image = base64.b64encode(jpeg_buf.tobytes()).decode("ascii")
 
             resp = await self._client.post(
-                VERCEL_ASK_URL,
+                ASK_API_URL,
                 json={"image": b64_image, "prompt": prompt},
                 timeout=15.0,
             )

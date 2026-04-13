@@ -13,12 +13,14 @@ FACE_PI_CAMERA_URL = "http://localhost:8085/frame"
 CAMERA_FRAME_WIDTH = 640
 CAMERA_FRAME_HEIGHT = 480
 
+# ── Local / Cloud API ───────────────────────────────────────
+ASK_API_URL = "http://localhost:3000/api/ask"
+
 # ── Vercel API ──────────────────────────────────────────────
 VERCEL_BASE_URL = "https://triage-ashy.vercel.app"
 VERCEL_CAMERA_FEED_URL = f"{VERCEL_BASE_URL}/api/camera-feed"
 VERCEL_ROBOT_STATE_URL = f"{VERCEL_BASE_URL}/api/robot-state"
 VERCEL_ROBOT_COMMAND_URL = f"{VERCEL_BASE_URL}/api/robot-command"
-VERCEL_ASK_URL = f"{VERCEL_BASE_URL}/api/ask"
 
 # ── Navigation PID ──────────────────────────────────────────
 NAV_KP = 0.5       # Proportional gain
