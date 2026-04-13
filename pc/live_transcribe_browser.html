@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Triage PC Listener</title>
+  <style>
+    :root {
+      --bg: #f5fbff;
+      --card: #ffffff;
+      --line: #c6e7f5;
+      --brand: #1497c8;
+      --text: #16313b;
+      --muted: #5f7b86;
+      --good: #2c9e5f;
+      --warn: #b35f11;
+      --bad: #c0392b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: radial-gradient(circle at top, #eaf8ff, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(20, 151, 200, 0.08);
+    }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 16px; margin-bottom: 12px; }
+    p.sub { margin-top: 8px; color: var(--muted); }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    label { font-size: 14px; color: var(--muted); display: grid; gap: 6px; flex: 1; min-width: 220px; }
+    input, textarea, button {
+      font: inherit;
+      border-radius: 12px;
+    }
+    input, textarea {
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+      width: 100%;
+      background: #fff;
+      color: var(--text);
+    }
+    button {
+      border: 0;
+      padding: 12px 16px;
+      background: var(--brand);
+      color: white;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: #e7f6fc;
+      color: var(--brand);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 13px;
+      background: #edf8fd;
+      color: var(--brand);
+      font-weight: 600;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status.good { color: var(--good); background: #eefaf3; }
+    .status.warn { color: var(--warn); background: #fff5e8; }
+    .status.bad { color: var(--bad); background: #fff0ee; }
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+    #log {
+      min-height: 220px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      background: #09151a;
+      color: #d6eef8;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid #143640;
+    }
+    #transcriptPreview {
+      min-height: 80px;
+      background: #f6fbfd;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Triage PC Listener</h1>
+      <p class="sub">Uses your PC browser microphone, listens continuously, and relays final transcripts to the Brain Pi.</p>
+    </div>
+
+    <div class="card">
+      <h2>Connection</h2>
+      <div class="row">
+        <label>
+          Brain Pi relay URL
+          <input id="piUrl" value="http://192.168.0.232:3000" />
+        </label>
+        <label>
+          Source label
+          <input id="source" value="pc-browser" />
+        </label>
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button id="startBtn">Start Listening</button>
+        <button id="stopBtn" class="secondary" disabled>Stop</button>
+        <button id="sendTestBtn" class="secondary">Send Manual Test</button>
+        <div id="status" class="status warn"><span class="dot"></span><span>Idle</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Latest Transcript</h2>
+      <textarea id="transcriptPreview" readonly placeholder="No transcript yet..."></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Log</h2>
+      <div id="log" class="mono"></div>
+    </div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const sendTestBtn = document.getElementById('sendTestBtn');
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const transcriptPreview = document.getElementById('transcriptPreview');
+    const piUrlInput = document.getElementById('piUrl');
+    const sourceInput = document.getElementById('source');
+
+    let recognition = null;
+    let listening = false;
+
+    function log(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      logEl.textContent += `[${timestamp}] ${message}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(kind, text) {
+      statusEl.className = `status ${kind}`;
+      statusEl.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+    }
+
+    async function postTranscript(text) {
+      const piUrl = piUrlInput.value.trim().replace(/\/$/, '');
+      const source = sourceInput.value.trim() || 'pc-browser';
+      const res = await fetch(`${piUrl}/api/transcript`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, source }),
+      });
+      if (!res.ok) {
+        throw new Error(await res.text() || `Relay error ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function buildRecognition() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        throw new Error('This browser does not support SpeechRecognition.');
+      }
+      const rec = new SR();
+      rec.lang = 'en-US';
+      rec.continuous = true;
+      rec.interimResults = true;
+
+      rec.onstart = () => {
+        setStatus('good', 'Listening');
+        log('Speech recognition started');
+      };
+
+      rec.onresult = async (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          const text = result[0].transcript.trim();
+          transcriptPreview.value = text;
+          if (!result.isFinal || !text) continue;
+          log(`Heard: ${text}`);
+          try {
+            const payload = await postTranscript(text);
+            log(`Sent transcript id=${payload.id}`);
+          } catch (error) {
+            log(`Relay failed: ${error.message || error}`);
+            setStatus('bad', 'Relay error');
+          }
+        }
+      };
+
+      rec.onerror = (event) => {
+        log(`Recognition error: ${event.error}`);
+        setStatus(event.error === 'network' ? 'bad' : 'warn', `Error: ${event.error}`);
+      };
+
+      rec.onend = () => {
+        log('Speech recognition ended');
+        if (listening) {
+          setStatus('warn', 'Restarting');
+          try {
+            rec.start();
+          } catch (error) {
+            log(`Restart failed: ${error.message || error}`);
+            setStatus('bad', 'Restart failed');
+          }
+        } else {
+          setStatus('warn', 'Idle');
+        }
+      };
+
+      return rec;
+    }
+
+    startBtn.addEventListener('click', async () => {
+      try {
+        recognition = buildRecognition();
+        listening = true;
+        recognition.start();
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      } catch (error) {
+        log(`Start failed: ${error.message || error}`);
+        setStatus('bad', 'Start failed');
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      listening = false;
+      recognition?.stop();
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus('warn', 'Idle');
+    });
+
+    sendTestBtn.addEventListener('click', async () => {
+      try {
+        const payload = await postTranscript('Hello Triage, this is a browser relay test.');
+        log(`Manual test sent id=${payload.id}`);
+        transcriptPreview.value = 'Hello Triage, this is a browser relay test.';
+      } catch (error) {
+        log(`Manual test failed: ${error.message || error}`);
+        setStatus('bad', 'Relay error');
+      }
+    });
+  </script>
+</body>
+</html>

@@ -93,6 +93,23 @@ What to expect:
 - after a short pause, it transcribes locally
 - then it sends the final text to the Brain Pi
 
+## 5b. Browser fallback for Windows audio issues
+
+If the Python listener cannot open your Windows microphone, use the browser relay page instead:
+
+1. Open [pc/live_transcribe_browser.html](/C:/Users/roben/Downloads/TRIAGE/pc/live_transcribe_browser.html) in Chrome or Edge on your PC.
+2. Keep the Brain Pi URL set to:
+
+```text
+http://192.168.0.232:3000
+```
+
+3. Click `Start Listening`.
+4. Allow microphone access in the browser.
+5. Speak normally. Final transcripts will be posted to the Brain Pi relay.
+
+This uses the browser's speech recognition stack instead of Python/PortAudio, which is often more reliable on Windows.
+
 ## 6. Recommended everyday command
 
 For a good balance of speed and accuracy on most PCs:
