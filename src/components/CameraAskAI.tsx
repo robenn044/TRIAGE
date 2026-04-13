@@ -141,6 +141,9 @@ export default function CameraAskAI() {
   const browserCameraStreamRef = useRef<MediaStream | null>(null)
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
   const recognitionTranscriptRef = useRef('')
+  const autoListenEnabledRef = useRef(false)
+  const browserMediaReadyRef = useRef(false)
+  const restartRecognitionTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const audioStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
@@ -242,52 +245,6 @@ export default function CameraAskAI() {
     return () => { cancelled = true }
   }, [mjpegUrl, cameraError, cameraReady])
 
-  useEffect(() => {
-    if (!preferBrowserMode || !navigator.mediaDevices?.getUserMedia) {
-      return
-    }
-
-    let cancelled = false
-
-    const startBrowserCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-          },
-          audio: false,
-        })
-
-        if (cancelled) {
-          stream.getTracks().forEach(track => track.stop())
-          return
-        }
-
-        browserCameraStreamRef.current = stream
-        if (browserVideoRef.current) {
-          browserVideoRef.current.srcObject = stream
-          await browserVideoRef.current.play().catch(() => undefined)
-        }
-
-        setFeedSrc(null)
-        setCameraReady(true)
-        setCameraError(null)
-      } catch (error) {
-        console.error('Browser camera failed:', error)
-        setCameraReady(false)
-        setCameraError(`Cannot access webcam: ${getErrorMessage(error)}`)
-      }
-    }
-
-    void startBrowserCamera()
-
-    return () => {
-      cancelled = true
-      browserCameraStreamRef.current?.getTracks().forEach(track => track.stop())
-      browserCameraStreamRef.current = null
-    }
-  }, [preferBrowserMode])
-
   const cleanupRecording = useCallback(async () => {
     clearTimeout(recordTimeoutRef.current)
     audioProcessorRef.current?.disconnect()
@@ -306,6 +263,111 @@ export default function CameraAskAI() {
       audioContextRef.current = null
     }
   }, [])
+
+  const restartBrowserRecognition = useCallback((delayMs = 500) => {
+    clearTimeout(restartRecognitionTimerRef.current)
+    if (!preferBrowserMode || !autoListenEnabledRef.current || !browserMediaReadyRef.current) {
+      return
+    }
+
+    restartRecognitionTimerRef.current = setTimeout(() => {
+      if (recognitionRef.current || processingRef.current || isSpeakingRef.current) {
+        return
+      }
+
+      try {
+        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        if (!RecognitionCtor) {
+          return
+        }
+
+        const recognition = new RecognitionCtor() as BrowserSpeechRecognition
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = 'en-US'
+        recognitionTranscriptRef.current = ''
+
+        recognition.onstart = () => {
+          setMicEnabled(true)
+          setState('listening')
+          setSpeechHint('')
+        }
+
+        recognition.onresult = (event: any) => {
+          let interimText = ''
+          let finalText = ''
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i]
+            const text = result[0]?.transcript?.trim?.() || ''
+            if (!text) continue
+
+            if (result.isFinal) {
+              finalText = `${finalText} ${text}`.trim()
+            } else {
+              interimText = `${interimText} ${text}`.trim()
+            }
+          }
+
+          if (interimText) {
+            setTranscript(interimText)
+          }
+
+          if (finalText && !processingRef.current && !isSpeakingRef.current) {
+            recognitionTranscriptRef.current = finalText
+            setTranscript(finalText)
+            recognition.stop()
+          }
+        }
+
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event)
+          const errorCode = event?.error || 'speech recognition failed'
+
+          if (errorCode === 'no-speech') {
+            setTranscript('')
+            setState('listening')
+            return
+          }
+
+          if (errorCode === 'audio-capture') {
+            setSpeechHint('Chrome could not open the microphone. Check the site mic permission and Windows input device, then retry.')
+          } else {
+            setSpeechHint(`Speech recognition issue: ${errorCode}`)
+          }
+        }
+
+        recognition.onend = () => {
+          const finalText = recognitionTranscriptRef.current.trim()
+          recognitionRef.current = null
+
+          if (finalText && !processingRef.current && !isSpeakingRef.current) {
+            recognitionTranscriptRef.current = ''
+            void askAI(finalText).finally(() => {
+              restartBrowserRecognition(800)
+            })
+            return
+          }
+
+          if (autoListenEnabledRef.current && !processingRef.current && !isSpeakingRef.current) {
+            restartBrowserRecognition(800)
+          } else {
+            setMicEnabled(false)
+            if (!lastAnswer) {
+              setState('idle')
+            }
+          }
+        }
+
+        recognitionRef.current = recognition
+        recognition.start()
+      } catch (error) {
+        console.error('Browser speech start failed:', error)
+        setSpeechHint(`Speech recognition unavailable: ${getErrorMessage(error)}`)
+        setState('error')
+      }
+    }, delayMs)
+  }, [askAI, lastAnswer, preferBrowserMode])
 
   const captureBrowserFrame = useCallback(() => {
     const video = browserVideoRef.current
@@ -350,7 +412,7 @@ export default function CameraAskAI() {
         const utterance = new SpeechSynthesisUtterance(text)
         const preferredVoice = voices.find(voice => voice.lang.toLowerCase().startsWith('en')) || voices[0]
 
-        if (preferredVoice) {
+      if (preferredVoice) {
           utterance.voice = preferredVoice
           utterance.lang = preferredVoice.lang
         } else {
@@ -396,8 +458,11 @@ export default function CameraAskAI() {
       }
     } finally {
       finishSpeaking()
+      if (preferBrowserMode && autoListenEnabledRef.current) {
+        restartBrowserRecognition(800)
+      }
     }
-  }, [])
+  }, [preferBrowserMode, restartBrowserRecognition])
 
   const askAI = useCallback(async (prompt: string) => {
     processingRef.current = true
@@ -455,86 +520,11 @@ export default function CameraAskAI() {
   }, [captureBrowserFrame, mjpegUrl, preferBrowserMode, speak])
 
   const cleanupRecognition = useCallback(() => {
+    clearTimeout(restartRecognitionTimerRef.current)
     recognitionRef.current?.abort()
     recognitionRef.current = null
     recognitionTranscriptRef.current = ''
   }, [])
-
-  const stopBrowserRecognition = useCallback(() => {
-    recognitionRef.current?.stop()
-  }, [])
-
-  const startBrowserRecognition = useCallback(() => {
-    if (!speechRecognitionCtor) {
-      throw new Error('Chrome speech recognition is not available in this browser.')
-    }
-
-    const recognition = new speechRecognitionCtor() as BrowserSpeechRecognition
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-    recognitionTranscriptRef.current = ''
-
-    recognition.onstart = () => {
-      setTranscript('')
-      setLastAnswer('')
-      setSpeechHint('')
-      setState('listening')
-      setMicEnabled(true)
-    }
-
-    recognition.onresult = (event: any) => {
-      let interimText = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i]
-        const text = result[0]?.transcript?.trim?.() || ''
-        if (!text) continue
-
-        if (result.isFinal) {
-          recognitionTranscriptRef.current = `${recognitionTranscriptRef.current} ${text}`.trim()
-        } else {
-          interimText = `${interimText} ${text}`.trim()
-        }
-      }
-
-      setTranscript(interimText || recognitionTranscriptRef.current)
-    }
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event)
-      const errorCode = event?.error || 'speech recognition failed'
-
-      if (errorCode === 'no-speech') {
-        setTranscript('')
-        setMicEnabled(false)
-        setState('idle')
-        return
-      }
-
-      setLastAnswer(`Error: ${errorCode}`)
-      setMicEnabled(false)
-      setState('error')
-    }
-
-    recognition.onend = () => {
-      const text = recognitionTranscriptRef.current.trim()
-      recognitionRef.current = null
-      setMicEnabled(false)
-
-      if (!text) {
-        if (stateRef.current === 'listening') {
-          setState('idle')
-        }
-        return
-      }
-
-      setTranscript(text)
-      void askAI(text)
-    }
-
-    recognitionRef.current = recognition
-    recognition.start()
-  }, [askAI, speechRecognitionCtor])
 
   const transcribeCapturedAudio = useCallback(async () => {
     const context = audioContextRef.current
@@ -636,13 +626,20 @@ export default function CameraAskAI() {
 
     if (preferBrowserMode && speechRecognitionCtor) {
       if (micEnabled) {
-        stopBrowserRecognition()
+        autoListenEnabledRef.current = false
+        cleanupRecognition()
+        setMicEnabled(false)
+        setState(lastAnswer ? 'idle' : 'idle')
+        setSpeechHint('Hands-free listening paused.')
         return
       }
 
       try {
-        cleanupRecognition()
-        startBrowserRecognition()
+        autoListenEnabledRef.current = true
+        setTranscript('')
+        setLastAnswer('')
+        setSpeechHint('')
+        restartBrowserRecognition(0)
       } catch (error) {
         console.error('Browser speech start failed:', error)
         setLastAnswer(`Error: ${getErrorMessage(error)}`)
@@ -674,7 +671,7 @@ export default function CameraAskAI() {
       setMicEnabled(false)
       await cleanupRecording()
     }
-  }, [cleanupRecognition, cleanupRecording, micEnabled, preferBrowserMode, speechRecognitionCtor, startBrowserCapture, startBrowserRecognition, stopBrowserCapture, stopBrowserRecognition])
+  }, [cleanupRecognition, cleanupRecording, lastAnswer, micEnabled, preferBrowserMode, restartBrowserRecognition, speechRecognitionCtor, startBrowserCapture, stopBrowserCapture])
 
   useEffect(() => () => {
     clearTimeout(speechFallbackTimerRef.current)
@@ -687,13 +684,72 @@ export default function CameraAskAI() {
     void cleanupRecording()
   }, [cleanupRecognition, cleanupRecording])
 
+  useEffect(() => {
+    if (!preferBrowserMode || !navigator.mediaDevices?.getUserMedia) {
+      return
+    }
+
+    let cancelled = false
+
+    const initializeBrowserMedia = async () => {
+      try {
+        setCameraError(null)
+        setSpeechHint('Chrome will ask for camera and microphone access once.')
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
+
+        browserMediaReadyRef.current = true
+        browserCameraStreamRef.current = stream
+        if (browserVideoRef.current) {
+          browserVideoRef.current.srcObject = stream
+          await browserVideoRef.current.play().catch(() => undefined)
+        }
+
+        setFeedSrc(null)
+        setCameraReady(true)
+        setCameraError(null)
+        setSpeechHint('Hands-free listening is on.')
+        autoListenEnabledRef.current = true
+        restartBrowserRecognition(300)
+      } catch (error) {
+        console.error('Browser media init failed:', error)
+        browserMediaReadyRef.current = false
+        setCameraReady(false)
+        setMicEnabled(false)
+        setCameraError(`Chrome could not access camera or microphone: ${getErrorMessage(error)}`)
+        setSpeechHint('Check the site permissions in Chrome and allow camera + microphone for localhost.')
+        setState('error')
+      }
+    }
+
+    void initializeBrowserMedia()
+
+    return () => {
+      cancelled = true
+    }
+  }, [preferBrowserMode, restartBrowserRecognition])
+
   const statusText = (() => {
     switch (state) {
       case 'listening': return '🎙️ Recording…'
       case 'processing': return '🧠 Thinking…'
       case 'speaking': return '🔊 Speaking…'
       case 'error': return '⚠️ Error'
-      default: return lastAnswer ? '✅ Answer ready' : '⏸ Paused'
+      default: return lastAnswer ? '✅ Answer ready' : preferBrowserMode ? '🎧 Hands-free' : '⏸ Paused'
     }
   })()
 
@@ -735,7 +791,15 @@ export default function CameraAskAI() {
               <Button
                 onClick={() => void toggleMicCapture()}
                 size="lg"
-                title={micEnabled ? 'Stop recording and transcribe' : 'Start browser microphone recording'}
+                title={
+                  preferBrowserMode
+                    ? micEnabled
+                      ? 'Pause hands-free listening'
+                      : 'Resume hands-free listening'
+                    : micEnabled
+                      ? 'Stop recording and transcribe'
+                      : 'Start browser microphone recording'
+                }
                 className={`h-9 w-9 rounded-full p-0 shadow-sm ${
                   micEnabled
                     ? 'bg-[#20a7db] shadow-[#20a7db]/25 hover:bg-[#1b96c5]'
@@ -854,9 +918,13 @@ export default function CameraAskAI() {
                         : lastAnswer
                     : transcript && state === 'listening'
                       ? transcript
-                      : micEnabled
-                        ? 'Recording from Chromium microphone\u2026 tap the mic again to send'
-                        : 'Tap the mic to speak'}
+                      : preferBrowserMode
+                        ? micEnabled
+                          ? 'Hands-free listening is active. Just talk naturally.'
+                          : 'Hands-free listening is paused. Tap the mic to resume.'
+                        : micEnabled
+                          ? 'Recording from Chromium microphone\u2026 tap the mic again to send'
+                          : 'Tap the mic to speak'}
             </p>
           </div>
         </section>
