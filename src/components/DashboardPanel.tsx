@@ -57,6 +57,9 @@ const PLANNER_STEPS = [
   'Get a personal itinerary.',
 ]
 
+const MEDIA_CONSENT_KEY = 'triage.media-consent'
+const MIC_PREFERENCE_KEY = 'triage.mic-enabled'
+
 function getSpeechRecognitionCtor() {
   if (typeof window === 'undefined') {
     return null
@@ -67,6 +70,40 @@ function getSpeechRecognitionCtor() {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
+}
+
+function readStoredFlag(key: string, fallback = false) {
+  try {
+    const value = localStorage.getItem(key)
+    if (value === null) {
+      return fallback
+    }
+
+    return value === 'true'
+  } catch {
+    return fallback
+  }
+}
+
+function writeStoredFlag(key: string, value: boolean) {
+  try {
+    localStorage.setItem(key, value ? 'true' : 'false')
+  } catch {
+    // ignore storage failures
+  }
+}
+
+async function queryPermissionState(name: 'camera' | 'microphone') {
+  if (!navigator.permissions?.query) {
+    return 'unsupported' as const
+  }
+
+  try {
+    const status = await navigator.permissions.query({ name } as PermissionDescriptor)
+    return status.state
+  } catch {
+    return 'unsupported' as const
+  }
 }
 
 function describeMediaError(error: unknown, kind: 'camera' | 'microphone') {
@@ -242,13 +279,17 @@ export default function DashboardPanel() {
   const [micError, setMicError] = useState<string | null>(null)
   const [micErrorDetail, setMicErrorDetail] = useState<string | null>(null)
   const [micPermissionGranted, setMicPermissionGranted] = useState(false)
-  const [micEnabled, setMicEnabled] = useState(false)
+  const [micEnabled, setMicEnabled] = useState(() => readStoredFlag(MIC_PREFERENCE_KEY, true))
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
 
   useEffect(() => {
     stateRef.current = state
   }, [state])
+
+  useEffect(() => {
+    writeStoredFlag(MIC_PREFERENCE_KEY, micEnabled)
+  }, [micEnabled])
 
   const clearCameraStream = useCallback(() => {
     streamRef.current?.getTracks().forEach(track => track.stop())
@@ -365,6 +406,7 @@ export default function DashboardPanel() {
     setMicEnabled(microphoneGranted)
 
     if (cameraGranted && microphoneGranted) {
+      writeStoredFlag(MEDIA_CONSENT_KEY, true)
       setState('listening')
     } else if (!cameraGranted || !microphoneGranted) {
       setState('error')
@@ -438,10 +480,19 @@ export default function DashboardPanel() {
         image = snapFrame(videoRef.current)
       }
 
+      const livePrompt = [
+        'You are replying inside a live voice-and-camera tourist kiosk conversation.',
+        'Return only the exact final words that should be spoken to the traveler right now.',
+        'Be warm, personal, natural, and concise.',
+        'Do not include thinking process, analysis, steps, options, drafts, quotes, labels, markdown, or bullet points.',
+        'If the traveler is greeting you or checking whether you can hear them, answer naturally and briefly, then offer help with Albania.',
+        `Traveler message: ${prompt}`,
+      ].join(' ')
+
       const response = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, prompt }),
+        body: JSON.stringify({ image, prompt: livePrompt }),
       })
 
       if (!response.ok) {
@@ -668,6 +719,76 @@ export default function DashboardPanel() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+
+    const restorePermissions = async () => {
+      if (!readStoredFlag(MEDIA_CONSENT_KEY)) {
+        return
+      }
+
+      const [cameraPermission, microphonePermission] = await Promise.all([
+        queryPermissionState('camera'),
+        queryPermissionState('microphone'),
+      ])
+
+      if (cancelled) {
+        return
+      }
+
+      const shouldRestoreCamera = cameraPermission === 'granted'
+      const shouldRestoreMic = microphonePermission === 'granted'
+
+      if (!shouldRestoreCamera && !shouldRestoreMic) {
+        return
+      }
+
+      setRequestingAccess(true)
+
+      let restoredCamera = false
+      let restoredMic = false
+
+      if (shouldRestoreCamera) {
+        try {
+          await requestCameraAccess()
+          restoredCamera = true
+        } catch {
+          // ignore restore failures and fall back to manual retry
+        }
+      }
+
+      if (shouldRestoreMic) {
+        try {
+          await requestMicrophoneAccess()
+          restoredMic = true
+        } catch {
+          // ignore restore failures and fall back to manual retry
+        }
+      }
+
+      if (cancelled) {
+        return
+      }
+
+      const prefersMicEnabled = readStoredFlag(MIC_PREFERENCE_KEY, true)
+      setMicEnabled(restoredMic && prefersMicEnabled)
+
+      if (restoredCamera && restoredMic && prefersMicEnabled) {
+        setState('listening')
+      } else if (restoredCamera) {
+        setState('idle')
+      }
+
+      setRequestingAccess(false)
+    }
+
+    restorePermissions()
+
+    return () => {
+      cancelled = true
+    }
+  }, [requestCameraAccess, requestMicrophoneAccess])
+
+  useEffect(() => {
     let lockTimer: ReturnType<typeof setTimeout>
 
     const resetLockTimer = () => {
@@ -716,6 +837,9 @@ export default function DashboardPanel() {
       try {
         await requestMicrophoneAccess()
         setMicEnabled(true)
+        if (cameraReady) {
+          writeStoredFlag(MEDIA_CONSENT_KEY, true)
+        }
         setState(cameraReady ? 'listening' : 'idle')
       } catch (error) {
         const mediaError = describeMediaError(error, 'microphone')
@@ -755,6 +879,9 @@ export default function DashboardPanel() {
 
     try {
       await requestCameraAccess()
+      if (micPermissionGranted) {
+        writeStoredFlag(MEDIA_CONSENT_KEY, true)
+      }
       setState(micEnabled && micPermissionGranted ? 'listening' : 'idle')
     } catch (error) {
       const mediaError = describeMediaError(error, 'camera')
