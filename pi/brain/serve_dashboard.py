@@ -22,6 +22,7 @@ import socketserver
 import subprocess
 import sys
 import tempfile
+import shutil
 import urllib.request
 import urllib.error
 import json
@@ -42,6 +43,8 @@ DEFAULT_WHISPER_MODEL = os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bi
 DEFAULT_WHISPER_THREADS = "4"
 DEFAULT_TTS_VOICE = "en-us"
 DEFAULT_TTS_SPEED = "165"
+DEFAULT_PIPER_MODEL = "en_US-lessac-medium"
+DEFAULT_PIPER_DOWNLOAD_DIR = os.path.expanduser("~/piper-voices")
 LAST_TTS_WAV = os.path.join(tempfile.gettempdir(), "triage-last-response.wav")
 SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
@@ -332,7 +335,19 @@ def run_local_stt(audio_b64: str):
             pass
 
 
-def generate_tts_wav(text: str, output_path: str):
+def find_piper_binary():
+    candidates = [
+        os.environ.get("TRIAGE_PIPER_BIN"),
+        os.path.join(REPO_DIR, "pi", "brain", "venv", "bin", "piper"),
+        shutil.which("piper"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def generate_tts_wav_espeak(text: str, output_path: str):
     tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
     tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
     tts_speed = os.environ.get("TRIAGE_TTS_SPEED", DEFAULT_TTS_SPEED)
@@ -354,17 +369,71 @@ def generate_tts_wav(text: str, output_path: str):
     )
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or "Failed to generate TTS wav")
+    return "espeak-ng"
+
+
+def generate_tts_wav_piper(text: str, output_path: str):
+    piper_binary = find_piper_binary()
+    if not piper_binary:
+        raise FileNotFoundError("Piper binary not found")
+
+    download_dir = os.environ.get("TRIAGE_PIPER_DOWNLOAD_DIR", DEFAULT_PIPER_DOWNLOAD_DIR)
+    os.makedirs(download_dir, exist_ok=True)
+
+    cmd = [
+        piper_binary,
+        "--model", os.environ.get("TRIAGE_PIPER_MODEL", DEFAULT_PIPER_MODEL),
+        "--output_file", output_path,
+        "--download-dir", download_dir,
+        "--data-dir", download_dir,
+    ]
+    completed = subprocess.run(
+        cmd,
+        input=text,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "Failed to generate Piper wav")
+    return "piper"
+
+
+def generate_tts_wav(text: str, output_path: str):
+    preferred_engine = os.environ.get("TRIAGE_TTS_ENGINE", "piper").lower()
+
+    if preferred_engine == "piper":
+        try:
+            return generate_tts_wav_piper(text, output_path)
+        except Exception as exc:
+            print(f"Piper TTS unavailable, falling back to espeak-ng: {exc}")
+            return generate_tts_wav_espeak(text, output_path)
+
+    return generate_tts_wav_espeak(text, output_path)
+
+
+def play_wav(path: str):
+    player = shutil.which("aplay") or shutil.which("paplay")
+    if not player:
+        return False
+
+    completed = subprocess.run(
+        [player, path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Audio playback failed")
+    return True
 
 
 def speak_locally(text: str):
-    """Speak text on the Brain Pi using espeak-ng, and save the last wav preview."""
+    """Speak text on the Brain Pi, preferring Piper and saving the last wav preview."""
     global tts_process
-
-    tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
-    tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
-    tts_speed = os.environ.get("TRIAGE_TTS_SPEED", DEFAULT_TTS_SPEED)
-
-    generate_tts_wav(text, LAST_TTS_WAV)
 
     if tts_process and tts_process.poll() is None:
         tts_process.terminate()
@@ -373,30 +442,9 @@ def speak_locally(text: str):
         except subprocess.TimeoutExpired:
             tts_process.kill()
 
-    cmd = [
-        tts_binary,
-        "-v", tts_voice,
-        "-s", str(tts_speed),
-        text,
-    ]
-    try:
-        tts_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        _, stderr = tts_process.communicate(timeout=30)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"{tts_binary} not found. Install espeak-ng or set TRIAGE_TTS_BIN."
-        ) from e
-    except subprocess.TimeoutExpired:
-        tts_process.kill()
-        raise RuntimeError("Local TTS timed out")
-
-    if tts_process.returncode != 0:
-        raise RuntimeError(stderr.strip() or "Local TTS failed")
+    provider = generate_tts_wav(text, LAST_TTS_WAV)
+    played = play_wav(LAST_TTS_WAV)
+    return {"provider": provider, "played": played}
 
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
@@ -592,7 +640,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            speak_locally(text.strip())
+            result = speak_locally(text.strip())
         except FileNotFoundError as e:
             print(f"TTS missing dependency: {e}")
             json_response(self, 503, {"error": str(e)})
@@ -602,7 +650,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             json_response(self, 500, {"error": str(e)})
             return
 
-        json_response(self, 200, {"ok": True, "provider": "espeak-ng"})
+        json_response(self, 200, {"ok": True, **result})
 
     def _proxy_to_vercel(self, method: str):
         """Forward /api/* requests to Vercel."""

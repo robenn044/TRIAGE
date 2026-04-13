@@ -54,6 +54,8 @@ pip install -r requirements.txt
 deactivate
 ```
 
+The dashboard server now prefers `piper` for a more natural offline English voice and falls back to `espeak-ng` if Piper is unavailable. The default Piper voice is `en_US-lessac-medium`.
+
 ## 6. Configure AI keys
 
 Create `~/TRIAGE/.env.local`:
@@ -116,6 +118,12 @@ Check local TTS:
 curl http://localhost:3000/api/speak \
   -H "Content-Type: application/json" \
   -d '{"text":"This is a Triage speaker test."}'
+```
+
+Download the latest generated response WAV:
+
+```bash
+curl http://localhost:3000/api/last-tts.wav -o /tmp/triage-last-response.wav
 ```
 
 Check transcript relay:
