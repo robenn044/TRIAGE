@@ -138,6 +138,7 @@ export default function CameraAskAI() {
   const [state, setState] = useState<AssistantState>('idle')
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
+  const [speechHint, setSpeechHint] = useState('')
   const [micEnabled, setMicEnabled] = useState(false)
   const [feedSrc, setFeedSrc] = useState<string | null>(null)
 
@@ -244,6 +245,7 @@ export default function CameraAskAI() {
 
   const speak = useCallback(async (text: string) => {
     clearTimeout(speechFallbackTimerRef.current)
+    setSpeechHint('')
 
     const finishSpeaking = () => {
       clearTimeout(speechFallbackTimerRef.current)
@@ -268,6 +270,11 @@ export default function CameraAskAI() {
       if (!res.ok) {
         const errText = await res.text()
         throw new Error(errText || `TTS error ${res.status}`)
+      }
+
+      const data = await res.json()
+      if (data?.played === false) {
+        setSpeechHint('Answer ready. Connect a speaker to hear playback.')
       }
     } finally {
       finishSpeaking()
@@ -318,6 +325,7 @@ export default function CameraAskAI() {
         await speak(answer)
       } catch (error) {
         console.error('TTS error:', error)
+        setSpeechHint(`Speech unavailable: ${getErrorMessage(error)}`)
       }
     } catch (error: unknown) {
       console.error('AI error:', error)
@@ -414,6 +422,7 @@ export default function CameraAskAI() {
 
     setTranscript('')
     setLastAnswer('')
+    setSpeechHint('')
     setState('listening')
     setMicEnabled(true)
 
@@ -460,7 +469,7 @@ export default function CameraAskAI() {
       case 'processing': return '🧠 Thinking…'
       case 'speaking': return '🔊 Speaking…'
       case 'error': return '⚠️ Error'
-      default: return '⏸ Paused'
+      default: return lastAnswer ? '✅ Answer ready' : '⏸ Paused'
     }
   })()
 
@@ -586,12 +595,14 @@ export default function CameraAskAI() {
 
           <div className="mt-2 shrink-0 rounded-xl bg-slate-900/85 px-4 py-2 backdrop-blur-sm">
             <p className="text-center text-xs leading-5 text-white/90">
-              {state === 'speaking' && lastAnswer
-                ? lastAnswer
-                : state === 'processing'
+              {state === 'processing'
                   ? 'Thinking\u2026'
                   : lastAnswer && lastAnswer.startsWith('Error:')
                     ? lastAnswer
+                    : lastAnswer
+                      ? speechHint
+                        ? `${lastAnswer} ${speechHint}`
+                        : lastAnswer
                     : transcript && state === 'listening'
                       ? transcript
                       : micEnabled
