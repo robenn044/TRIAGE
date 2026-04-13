@@ -264,111 +264,6 @@ export default function CameraAskAI() {
     }
   }, [])
 
-  const restartBrowserRecognition = useCallback((delayMs = 500) => {
-    clearTimeout(restartRecognitionTimerRef.current)
-    if (!preferBrowserMode || !autoListenEnabledRef.current || !browserMediaReadyRef.current) {
-      return
-    }
-
-    restartRecognitionTimerRef.current = setTimeout(() => {
-      if (recognitionRef.current || processingRef.current || isSpeakingRef.current) {
-        return
-      }
-
-      try {
-        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-        if (!RecognitionCtor) {
-          return
-        }
-
-        const recognition = new RecognitionCtor() as BrowserSpeechRecognition
-        recognition.continuous = true
-        recognition.interimResults = true
-        recognition.lang = 'en-US'
-        recognitionTranscriptRef.current = ''
-
-        recognition.onstart = () => {
-          setMicEnabled(true)
-          setState('listening')
-          setSpeechHint('')
-        }
-
-        recognition.onresult = (event: any) => {
-          let interimText = ''
-          let finalText = ''
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i]
-            const text = result[0]?.transcript?.trim?.() || ''
-            if (!text) continue
-
-            if (result.isFinal) {
-              finalText = `${finalText} ${text}`.trim()
-            } else {
-              interimText = `${interimText} ${text}`.trim()
-            }
-          }
-
-          if (interimText) {
-            setTranscript(interimText)
-          }
-
-          if (finalText && !processingRef.current && !isSpeakingRef.current) {
-            recognitionTranscriptRef.current = finalText
-            setTranscript(finalText)
-            recognition.stop()
-          }
-        }
-
-        recognition.onerror = (event: any) => {
-          console.error('Speech recognition error:', event)
-          const errorCode = event?.error || 'speech recognition failed'
-
-          if (errorCode === 'no-speech') {
-            setTranscript('')
-            setState('listening')
-            return
-          }
-
-          if (errorCode === 'audio-capture') {
-            setSpeechHint('Chrome could not open the microphone. Check the site mic permission and Windows input device, then retry.')
-          } else {
-            setSpeechHint(`Speech recognition issue: ${errorCode}`)
-          }
-        }
-
-        recognition.onend = () => {
-          const finalText = recognitionTranscriptRef.current.trim()
-          recognitionRef.current = null
-
-          if (finalText && !processingRef.current && !isSpeakingRef.current) {
-            recognitionTranscriptRef.current = ''
-            void askAI(finalText).finally(() => {
-              restartBrowserRecognition(800)
-            })
-            return
-          }
-
-          if (autoListenEnabledRef.current && !processingRef.current && !isSpeakingRef.current) {
-            restartBrowserRecognition(800)
-          } else {
-            setMicEnabled(false)
-            if (!lastAnswer) {
-              setState('idle')
-            }
-          }
-        }
-
-        recognitionRef.current = recognition
-        recognition.start()
-      } catch (error) {
-        console.error('Browser speech start failed:', error)
-        setSpeechHint(`Speech recognition unavailable: ${getErrorMessage(error)}`)
-        setState('error')
-      }
-    }, delayMs)
-  }, [askAI, lastAnswer, preferBrowserMode])
-
   const captureBrowserFrame = useCallback(() => {
     const video = browserVideoRef.current
     if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0) {
@@ -518,6 +413,111 @@ export default function CameraAskAI() {
       processingRef.current = false
     }
   }, [captureBrowserFrame, mjpegUrl, preferBrowserMode, speak])
+
+  const restartBrowserRecognition = useCallback((delayMs = 500) => {
+    clearTimeout(restartRecognitionTimerRef.current)
+    if (!preferBrowserMode || !autoListenEnabledRef.current || !browserMediaReadyRef.current) {
+      return
+    }
+
+    restartRecognitionTimerRef.current = setTimeout(() => {
+      if (recognitionRef.current || processingRef.current || isSpeakingRef.current) {
+        return
+      }
+
+      try {
+        const RecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        if (!RecognitionCtor) {
+          return
+        }
+
+        const recognition = new RecognitionCtor() as BrowserSpeechRecognition
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = 'en-US'
+        recognitionTranscriptRef.current = ''
+
+        recognition.onstart = () => {
+          setMicEnabled(true)
+          setState('listening')
+          setSpeechHint('')
+        }
+
+        recognition.onresult = (event: any) => {
+          let interimText = ''
+          let finalText = ''
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i]
+            const text = result[0]?.transcript?.trim?.() || ''
+            if (!text) continue
+
+            if (result.isFinal) {
+              finalText = `${finalText} ${text}`.trim()
+            } else {
+              interimText = `${interimText} ${text}`.trim()
+            }
+          }
+
+          if (interimText) {
+            setTranscript(interimText)
+          }
+
+          if (finalText && !processingRef.current && !isSpeakingRef.current) {
+            recognitionTranscriptRef.current = finalText
+            setTranscript(finalText)
+            recognition.stop()
+          }
+        }
+
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event)
+          const errorCode = event?.error || 'speech recognition failed'
+
+          if (errorCode === 'no-speech') {
+            setTranscript('')
+            setState('listening')
+            return
+          }
+
+          if (errorCode === 'audio-capture') {
+            setSpeechHint('Chrome could not open the microphone. Check the site mic permission and Windows input device, then retry.')
+          } else {
+            setSpeechHint(`Speech recognition issue: ${errorCode}`)
+          }
+        }
+
+        recognition.onend = () => {
+          const finalText = recognitionTranscriptRef.current.trim()
+          recognitionRef.current = null
+
+          if (finalText && !processingRef.current && !isSpeakingRef.current) {
+            recognitionTranscriptRef.current = ''
+            void askAI(finalText).finally(() => {
+              restartBrowserRecognition(800)
+            })
+            return
+          }
+
+          if (autoListenEnabledRef.current && !processingRef.current && !isSpeakingRef.current) {
+            restartBrowserRecognition(800)
+          } else {
+            setMicEnabled(false)
+            if (!lastAnswer) {
+              setState('idle')
+            }
+          }
+        }
+
+        recognitionRef.current = recognition
+        recognition.start()
+      } catch (error) {
+        console.error('Browser speech start failed:', error)
+        setSpeechHint(`Speech recognition unavailable: ${getErrorMessage(error)}`)
+        setState('error')
+      }
+    }, delayMs)
+  }, [askAI, lastAnswer, preferBrowserMode])
 
   const cleanupRecognition = useCallback(() => {
     clearTimeout(restartRecognitionTimerRef.current)
