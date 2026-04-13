@@ -389,7 +389,7 @@ export default function DashboardPanel() {
     speechSynthesis.speak(utterance)
   }, [cameraReady, micEnabled, micPermissionGranted])
 
-  const askGroq = useCallback(async (prompt: string) => {
+  const askGemma = useCallback(async (prompt: string) => {
     setState('processing')
     setTranscript('')
 
@@ -497,7 +497,7 @@ export default function DashboardPanel() {
       }
 
       processingLock = true
-      askGroq(text).finally(() => {
+      askGemma(text).finally(() => {
         processingLock = false
       })
     }
@@ -598,7 +598,7 @@ export default function DashboardPanel() {
         // ignore
       }
     }
-  }, [askGroq, cameraReady, micEnabled, micPermissionGranted])
+  }, [askGemma, cameraReady, micEnabled, micPermissionGranted])
 
   useEffect(() => {
     const handleVoicesChanged = () => {
@@ -725,7 +725,7 @@ export default function DashboardPanel() {
 
   const footerText = (() => {
     if (state === 'speaking' && lastAnswer) return lastAnswer
-    if (state === 'processing') return 'Sending your English transcript and current camera view to Groq...'
+    if (state === 'processing') return 'Sending your English transcript and current camera view to Gemma 4...'
     if (transcript && state === 'listening') return transcript
     if (cameraError) return cameraError
     if (micError) return micError
@@ -836,7 +836,7 @@ export default function DashboardPanel() {
                         Turn on the live camera and microphone.
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-white/75">
-                        This asks Chrome directly for camera permission, microphone permission, free English speech-to-text, and a human English speaking voice for Groq replies.
+                        This asks Chrome directly for camera permission, microphone permission, free English speech-to-text, and a human English speaking voice for Gemma 4 replies.
                       </p>
                     </div>
                   </div>
@@ -852,7 +852,7 @@ export default function DashboardPanel() {
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">TTS</p>
-                      <p className="mt-2 text-xs leading-5 text-white/70">Human-sounding English voice preference for Groq responses.</p>
+                      <p className="mt-2 text-xs leading-5 text-white/70">Human-sounding English voice preference for Gemma 4 responses.</p>
                     </div>
                   </div>
 
@@ -922,7 +922,7 @@ export default function DashboardPanel() {
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 backdrop-blur-sm">
                 <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
                   <Loader2 className="mx-auto h-8 w-8 animate-spin text-[#20a7db]" />
-                  <p className="mt-2 text-xs font-semibold text-slate-900">Analyzing with Groq...</p>
+                  <p className="mt-2 text-xs font-semibold text-slate-900">Analyzing with Gemma 4...</p>
                 </div>
               </div>
             )}
@@ -963,7 +963,7 @@ export default function DashboardPanel() {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#20a7db]">
                   Assistant stack
                 </p>
-                <p className="text-xs font-semibold text-slate-800">Chrome media + Groq replies</p>
+                <p className="text-xs font-semibold text-slate-800">Chrome media + Gemma 4 replies</p>
               </div>
             </div>
           </div>

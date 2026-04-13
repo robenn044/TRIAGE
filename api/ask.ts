@@ -1,19 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
+const DEFAULT_MODEL = 'gemma-4-26b-a4b-it'
 
-type GroqContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } }
-
-interface GroqMessage {
-  role: 'system' | 'user'
-  content: string | GroqContentPart[]
+interface GeminiPart {
+  text?: string
+  inline_data?: {
+    mime_type: string
+    data: string
+  }
 }
 
-interface GroqResponse {
-  choices?: Array<{ message?: { content?: string } }>
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: GeminiPart[]
+    }
+  }>
 }
 
 function getErrorMessage(error: unknown) {
@@ -25,9 +28,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const apiKey = process.env.GROQ_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
+  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL
   if (!apiKey) {
-    return res.status(500).json({ error: 'GROQ_API_KEY not configured' })
+    return res.status(500).json({ error: 'GEMINI_API_KEY not configured' })
   }
 
   const { image, prompt, max_tokens } = req.body || {}
@@ -37,51 +41,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const messages: GroqMessage[] = [
-      {
-        role: 'system',
-        content:
-          'You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. ' +
-          'Answer the tourist\'s question concisely and helpfully. ' +
-          'Keep answers under 3 sentences unless more detail is clearly needed. ' +
-          'Be warm, informative, and focus on what would interest a tourist.',
-      },
-      {
-        role: 'user',
-        content: image
-          ? [
-              { type: 'text', text: prompt },
-              {
-                type: 'image_url',
-                image_url: { url: `data:image/jpeg;base64,${image}` },
-              },
-            ]
-          : prompt,
-      },
-    ]
+    const systemPrompt =
+      'You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. ' +
+      'Answer the tourist\'s question concisely and helpfully. ' +
+      'Keep answers under 3 sentences unless more detail is clearly needed. ' +
+      'Be warm, informative, and focus on what would interest a tourist.'
 
-    const groqRes = await fetch(GROQ_API_URL, {
+    const userParts: GeminiPart[] = image
+      ? [
+          { inline_data: { mime_type: 'image/jpeg', data: image } },
+          { text: prompt },
+        ]
+      : [{ text: prompt }]
+
+    const geminiRes = await fetch(`${GEMINI_API_URL}/${model}:generateContent`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        'x-goog-api-key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: MODEL,
-        messages,
-        max_tokens: typeof max_tokens === 'number' ? max_tokens : 300,
-        temperature: 0.7,
+        contents: [
+          {
+            role: 'user',
+            parts: userParts,
+          },
+        ],
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        generationConfig: {
+          maxOutputTokens: typeof max_tokens === 'number' ? max_tokens : 300,
+          temperature: 0.7,
+        },
       }),
     })
 
-    if (!groqRes.ok) {
-      const errBody = await groqRes.text()
-      console.error('Groq API error:', groqRes.status, errBody)
-      return res.status(groqRes.status).json({ error: `Groq API error: ${groqRes.status}` })
+    if (!geminiRes.ok) {
+      const errBody = await geminiRes.text()
+      console.error('Gemma API error:', geminiRes.status, errBody)
+      return res.status(geminiRes.status).json({ error: `Gemma API error: ${geminiRes.status}` })
     }
 
-    const data = (await groqRes.json()) as GroqResponse
-    const answer = data.choices?.[0]?.message?.content || 'Sorry, I could not generate an answer.'
+    const data = (await geminiRes.json()) as GeminiResponse
+    const answer =
+      data.candidates?.[0]?.content?.parts
+        ?.map(part => part.text ?? '')
+        .join('')
+        .trim() || 'Sorry, I could not generate an answer.'
 
     return res.status(200).json({ answer })
   } catch (error: unknown) {
