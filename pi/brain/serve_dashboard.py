@@ -40,6 +40,8 @@ DEFAULT_OLLAMA_MODEL = "gemma4"
 DEFAULT_WHISPER_BIN = os.path.expanduser("~/whisper.cpp/build/bin/whisper-cli")
 DEFAULT_WHISPER_MODEL = os.path.expanduser("~/whisper.cpp/models/ggml-base.en.bin")
 DEFAULT_WHISPER_THREADS = "4"
+DEFAULT_TTS_VOICE = "en-us"
+DEFAULT_TTS_SPEED = "165"
 SYSTEM_INSTRUCTION = (
     "You are Triage, a friendly and knowledgeable AI tour guide assistant in Albania. "
     "When shown an image, describe what you see and answer the tourist's question directly. "
@@ -51,6 +53,7 @@ SYSTEM_INSTRUCTION = (
 
 transcript_counter = 0
 transcript_queue = []
+tts_process = None
 
 
 def load_env_file(path: str):
@@ -275,6 +278,47 @@ def run_local_stt(audio_b64: str):
             pass
 
 
+def speak_locally(text: str):
+    """Speak text on the Brain Pi using espeak-ng, stopping any prior utterance."""
+    global tts_process
+
+    tts_binary = os.environ.get("TRIAGE_TTS_BIN", "espeak-ng")
+    tts_voice = os.environ.get("TRIAGE_TTS_VOICE", DEFAULT_TTS_VOICE)
+    tts_speed = os.environ.get("TRIAGE_TTS_SPEED", DEFAULT_TTS_SPEED)
+
+    if tts_process and tts_process.poll() is None:
+        tts_process.terminate()
+        try:
+            tts_process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            tts_process.kill()
+
+    cmd = [
+        tts_binary,
+        "-v", tts_voice,
+        "-s", str(tts_speed),
+        text,
+    ]
+    try:
+        tts_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _, stderr = tts_process.communicate(timeout=30)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"{tts_binary} not found. Install espeak-ng or set TRIAGE_TTS_BIN."
+        ) from e
+    except subprocess.TimeoutExpired:
+        tts_process.kill()
+        raise RuntimeError("Local TTS timed out")
+
+    if tts_process.returncode != 0:
+        raise RuntimeError(stderr.strip() or "Local TTS failed")
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """
     Serves static files from dist/, handles /api/ask locally, and proxies the
@@ -308,6 +352,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return
         if self.path == "/api/transcript":
             self._handle_transcript_post()
+            return
+        if self.path == "/api/speak":
+            self._handle_local_speak()
             return
         if self.path == "/api/stt":
             self._handle_local_stt()
@@ -430,6 +477,34 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         item = transcript_queue.pop(0)
         json_response(self, 200, item)
 
+    def _handle_local_speak(self):
+        """Speak text locally on the Brain Pi."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            json_response(self, 400, {"error": "Invalid JSON body"})
+            return
+
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            json_response(self, 400, {"error": "text is required"})
+            return
+
+        try:
+            speak_locally(text.strip())
+        except FileNotFoundError as e:
+            print(f"TTS missing dependency: {e}")
+            json_response(self, 503, {"error": str(e)})
+            return
+        except Exception as e:
+            print(f"TTS failure: {e}")
+            json_response(self, 500, {"error": str(e)})
+            return
+
+        json_response(self, 200, {"ok": True, "provider": "espeak-ng"})
+
     def _proxy_to_vercel(self, method: str):
         """Forward /api/* requests to Vercel."""
         target_url = VERCEL_BASE + self.path
@@ -510,6 +585,7 @@ def main():
         print(f"Dashboard serving on http://localhost:{PORT}")
         print(f"Camera stream: http://localhost:8085/stream")
         print("Local AI:      POST http://localhost:3000/api/ask")
+        print("Local TTS:     POST http://localhost:3000/api/speak")
         print("Local STT:     POST http://localhost:3000/api/stt")
         print("Transcript:    GET/POST http://localhost:3000/api/transcript")
         print("Other /api/* requests still proxy to Vercel")

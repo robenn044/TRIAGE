@@ -33,24 +33,6 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
-function pickVoice(): SpeechSynthesisVoice | null {
-  const voices = speechSynthesis.getVoices()
-  const priorities: Array<(v: SpeechSynthesisVoice) => boolean> = [
-    v => /Natural/i.test(v.name) && v.lang.startsWith('en'),
-    v => v.name.includes('Google UK English Female'),
-    v => v.name.includes('Google US English'),
-    v => v.name.includes('Google') && v.lang.startsWith('en'),
-    v => v.name.includes('Microsoft') && v.lang.startsWith('en') && !v.localService,
-    v => v.lang.startsWith('en') && !v.localService,
-    v => v.lang.startsWith('en'),
-  ]
-  for (const test of priorities) {
-    const match = voices.find(test)
-    if (match) return match
-  }
-  return null
-}
-
 interface TranscriptPayload {
   id: number | null
   text: string | null
@@ -158,16 +140,8 @@ export default function CameraAskAI() {
     return () => { cancelled = true }
   }, [mjpegUrl, cameraError, cameraReady])
 
-  const speak = useCallback((text: string) => {
+  const speak = useCallback(async (text: string) => {
     clearTimeout(speechFallbackTimerRef.current)
-    speechSynthesis.cancel()
-
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.95
-    utterance.pitch = 1.0
-
-    const voice = pickVoice()
-    if (voice) utterance.voice = voice
 
     const finishSpeaking = () => {
       clearTimeout(speechFallbackTimerRef.current)
@@ -177,20 +151,25 @@ export default function CameraAskAI() {
     isSpeakingRef.current = true
     setState('speaking')
 
-    utterance.onstart = () => {
-      clearTimeout(speechFallbackTimerRef.current)
-    }
-    utterance.onend = finishSpeaking
-    utterance.onerror = () => {
-      finishSpeaking()
-    }
-
     const estimatedMs = Math.min(12_000, Math.max(4_000, text.split(/\s+/).length * 450))
     speechFallbackTimerRef.current = setTimeout(() => {
       finishSpeaking()
     }, estimatedMs)
 
-    speechSynthesis.speak(utterance)
+    try {
+      const res = await fetchWithTimeout('/api/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }, 35_000)
+
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || `TTS error ${res.status}`)
+      }
+    } finally {
+      finishSpeaking()
+    }
   }, [micEnabled])
 
   const askAI = useCallback(async (prompt: string) => {
@@ -233,7 +212,11 @@ export default function CameraAskAI() {
       const data = await res.json()
       const answer = data.answer || 'Sorry, I could not understand that.'
       setLastAnswer(answer)
-      speak(answer)
+      try {
+        await speak(answer)
+      } catch (error) {
+        console.error('TTS error:', error)
+      }
     } catch (error: unknown) {
       console.error('AI error:', error)
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
@@ -288,11 +271,7 @@ export default function CameraAskAI() {
     return () => { cancelled = true }
   }, [askAI, micEnabled])
 
-  useEffect(() => {
-    speechSynthesis.getVoices()
-    speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
-    return () => clearTimeout(speechFallbackTimerRef.current)
-  }, [])
+  useEffect(() => () => clearTimeout(speechFallbackTimerRef.current), [])
 
   const statusText = (() => {
     switch (state) {

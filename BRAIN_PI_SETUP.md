@@ -30,7 +30,7 @@ git pull
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv python3-pip nodejs npm chromium
+sudo apt install -y python3 python3-venv python3-pip nodejs npm chromium espeak-ng
 sudo apt install -y libcap-dev libjpeg-dev libopenjp2-7
 sudo apt install -y libopenblas-dev
 ```
@@ -110,6 +110,14 @@ curl http://localhost:3000/api/ask \
   -d '{"prompt":"Say hello as Triage in one sentence."}'
 ```
 
+Check local TTS:
+
+```bash
+curl http://localhost:3000/api/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text":"This is a Triage speaker test."}'
+```
+
 Check transcript relay:
 
 ```bash
@@ -182,6 +190,6 @@ journalctl -u triage-brain -n 100 --no-pager
 ## Notes
 
 - `camera.py` runs on the Brain Pi for lowest possible dashboard latency.
-- `/api/ask` and `/api/transcript` are served locally by `serve_dashboard.py`.
+- `/api/ask`, `/api/speak`, and `/api/transcript` are served locally by `serve_dashboard.py`.
 - Your PC can use any STT tool you like as long as it sends plain text to `POST /api/transcript`.
 - See [PC_STT_SETUP.md](/C:/Users/roben/Downloads/TRIAGE/PC_STT_SETUP.md) for the always-listening Windows/PC microphone relay setup.
