@@ -184,3 +184,4 @@ journalctl -u triage-brain -n 100 --no-pager
 - `camera.py` runs on the Brain Pi for lowest possible dashboard latency.
 - `/api/ask` and `/api/transcript` are served locally by `serve_dashboard.py`.
 - Your PC can use any STT tool you like as long as it sends plain text to `POST /api/transcript`.
+- See [PC_STT_SETUP.md](/C:/Users/roben/Downloads/TRIAGE/PC_STT_SETUP.md) for the always-listening Windows/PC microphone relay setup.

@@ -10,6 +10,19 @@ import urllib.error
 import urllib.request
 
 
+def post_transcript(pi_base_url: str, text: str, source: str) -> dict:
+    payload = json.dumps({"text": text, "source": source}).encode("utf-8")
+    req = urllib.request.Request(
+        pi_base_url.rstrip("/") + "/api/transcript",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="POST transcript text to the Brain Pi /api/transcript relay."
@@ -42,19 +55,10 @@ def main() -> int:
         print("No transcript text provided.", file=sys.stderr)
         return 1
 
-    payload = json.dumps({"text": text, "source": args.source}).encode("utf-8")
-    req = urllib.request.Request(
-        args.pi.rstrip("/") + "/api/transcript",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            body = resp.read().decode("utf-8")
-            print(body)
-            return 0
+        body = post_transcript(args.pi, text, args.source)
+        print(json.dumps(body))
+        return 0
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
         print(f"HTTP {exc.code}: {detail}", file=sys.stderr)
