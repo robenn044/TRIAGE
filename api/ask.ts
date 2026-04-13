@@ -23,6 +23,49 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Internal server error'
 }
 
+function dedupeImmediateRepeat(text: string) {
+  const normalized = text.trim().replace(/\s+/g, ' ')
+  const midpoint = Math.floor(normalized.length / 2)
+
+  for (let split = midpoint; split >= Math.max(1, midpoint - 40); split -= 1) {
+    const left = normalized.slice(0, split).trim()
+    const right = normalized.slice(split).trim()
+
+    if (left && right && left === right) {
+      return left
+    }
+  }
+
+  return normalized
+}
+
+function sanitizeAnswer(rawAnswer: string) {
+  let answer = rawAnswer.trim()
+
+  const metaPrefixes = [
+    'The user is asking',
+    'As Triage',
+    'Draft response:',
+    'Response:',
+  ]
+
+  const draftIndex = answer.indexOf('Draft response:')
+  if (draftIndex >= 0) {
+    answer = answer.slice(draftIndex + 'Draft response:'.length).trim()
+  }
+
+  const lines = answer
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !metaPrefixes.some(prefix => line.startsWith(prefix)))
+
+  answer = lines.join(' ').trim()
+  answer = dedupeImmediateRepeat(answer)
+
+  return answer || 'Sorry, I could not generate an answer.'
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
@@ -75,7 +118,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         generationConfig: {
           maxOutputTokens: typeof max_tokens === 'number' ? max_tokens : 300,
-          temperature: 0.7,
+          temperature: 0.35,
         },
       }),
     })
@@ -93,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .join('')
         .trim() || 'Sorry, I could not generate an answer.'
 
-    return res.status(200).json({ answer })
+    return res.status(200).json({ answer: sanitizeAnswer(answer) })
   } catch (error: unknown) {
     console.error('Server error:', error)
     return res.status(500).json({ error: getErrorMessage(error) })
