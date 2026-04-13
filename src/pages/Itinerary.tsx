@@ -510,7 +510,7 @@ export default function Itinerary() {
 
               <div className="shrink-0 border-t border-[#20a7db]/10 grid gap-1.5 p-2.5">
                 <Button onClick={() => navigate('/dashboard')} className="h-8 bg-[#20a7db] text-xs shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]">
-                  Back to camera
+                  Back to dashboard
                 </Button>
                 <Button onClick={handleStartOver} variant="outline" className="h-8 border-[#20a7db]/[0.18] bg-white text-xs">
                   Start over
@@ -629,7 +629,7 @@ export default function Itinerary() {
               </div>
               <div className="mt-auto pt-3">
                 <Button onClick={() => navigate('/dashboard')} className="h-9 w-full bg-[#20a7db] text-xs shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5]">
-                  Back to camera
+                  Back to dashboard
                 </Button>
               </div>
             </aside>
