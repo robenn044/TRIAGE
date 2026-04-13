@@ -274,6 +274,60 @@ export default function CameraAskAI() {
     }
   }, [])
 
+  const askAI = useCallback(async (prompt: string) => {
+    processingRef.current = true
+    setState('processing')
+
+    try {
+      let image: string | null = latestFrameRef.current
+      if (image === '__mjpeg_stream__' && mjpegUrl) {
+        try {
+          const snapUrl = mjpegUrl.replace('/stream', '/frame')
+          const snapRes = await fetchWithTimeout(snapUrl, {}, SNAPSHOT_TIMEOUT_MS)
+          if (snapRes.ok) {
+            const blob = await snapRes.blob()
+            const reader = new FileReader()
+            image = await new Promise((resolve) => {
+              reader.onloadend = () => {
+                const result = reader.result as string
+                resolve(result.split(',')[1] || null)
+              }
+              reader.readAsDataURL(blob)
+            })
+          }
+        } catch {
+          image = null
+        }
+      }
+
+      const res = await fetchWithTimeout('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, prompt }),
+      }, ASK_TIMEOUT_MS)
+
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(errText || `API error ${res.status}`)
+      }
+
+      const data = await res.json()
+      const answer = data.answer || 'Sorry, I could not understand that.'
+      setLastAnswer(answer)
+      try {
+        await speak(answer)
+      } catch (error) {
+        console.error('TTS error:', error)
+      }
+    } catch (error: unknown) {
+      console.error('AI error:', error)
+      setLastAnswer(`Error: ${getErrorMessage(error)}`)
+      setState('idle')
+    } finally {
+      processingRef.current = false
+    }
+  }, [mjpegUrl, speak])
+
   const transcribeCapturedAudio = useCallback(async () => {
     const context = audioContextRef.current
     const chunks = audioChunksRef.current
@@ -394,60 +448,6 @@ export default function CameraAskAI() {
       await cleanupRecording()
     }
   }, [cleanupRecording, micEnabled, startBrowserCapture, stopBrowserCapture])
-
-  const askAI = useCallback(async (prompt: string) => {
-    processingRef.current = true
-    setState('processing')
-
-    try {
-      let image: string | null = latestFrameRef.current
-      if (image === '__mjpeg_stream__' && mjpegUrl) {
-        try {
-          const snapUrl = mjpegUrl.replace('/stream', '/frame')
-          const snapRes = await fetchWithTimeout(snapUrl, {}, SNAPSHOT_TIMEOUT_MS)
-          if (snapRes.ok) {
-            const blob = await snapRes.blob()
-            const reader = new FileReader()
-            image = await new Promise((resolve) => {
-              reader.onloadend = () => {
-                const result = reader.result as string
-                resolve(result.split(',')[1] || null)
-              }
-              reader.readAsDataURL(blob)
-            })
-          }
-        } catch {
-          image = null
-        }
-      }
-
-      const res = await fetchWithTimeout('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, prompt }),
-      }, ASK_TIMEOUT_MS)
-
-      if (!res.ok) {
-        const errText = await res.text()
-        throw new Error(errText || `API error ${res.status}`)
-      }
-
-      const data = await res.json()
-      const answer = data.answer || 'Sorry, I could not understand that.'
-      setLastAnswer(answer)
-      try {
-        await speak(answer)
-      } catch (error) {
-        console.error('TTS error:', error)
-      }
-    } catch (error: unknown) {
-      console.error('AI error:', error)
-      setLastAnswer(`Error: ${getErrorMessage(error)}`)
-      setState('idle')
-    } finally {
-      processingRef.current = false
-    }
-  }, [mjpegUrl, speak])
 
   useEffect(() => () => {
     clearTimeout(speechFallbackTimerRef.current)
