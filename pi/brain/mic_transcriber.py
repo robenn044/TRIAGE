@@ -38,7 +38,11 @@ MAX_SEGMENT_SECONDS = 10.0
 MIN_WORDS = 2
 MIN_CHARS = 8
 MIN_RMS = 0.01
-ENERGY_MULTIPLIER = 3.0
+MAX_NOISE_FLOOR = 0.08
+MIN_TRIGGER_RMS = 0.03
+MAX_TRIGGER_RMS = 0.12
+ENERGY_MULTIPLIER = 1.8
+LEVEL_LOG_INTERVAL = 3.0
 POST_URL = os.environ.get("TRIAGE_TRANSCRIPT_POST_URL", "http://127.0.0.1:3000/api/transcript")
 SOURCE = os.environ.get("TRIAGE_TRANSCRIPT_SOURCE", "pi-mic")
 
@@ -133,6 +137,21 @@ def transcribe_segment(chunks: list[bytes]) -> str:
     return transcript
 
 
+def compute_noise_floor(samples: list[float]) -> float:
+    if not samples:
+        return MIN_RMS
+    arr = np.array(samples, dtype=np.float32)
+    baseline = float(np.percentile(arr, 20))
+    if baseline > MAX_NOISE_FLOOR:
+        logger.warning(
+            "Measured noise floor %.4f is unusually high; clamping to %.4f",
+            baseline,
+            MAX_NOISE_FLOOR,
+        )
+        baseline = MAX_NOISE_FLOOR
+    return max(MIN_RMS, baseline)
+
+
 def start_capture(device: str):
     return subprocess.Popen(
         [
@@ -174,6 +193,7 @@ def main():
     segment_chunks: list[bytes] = []
     speech_started_at: float | None = None
     last_voice_at: float | None = None
+    last_level_log_at = 0.0
     calibration_deadline = time.monotonic() + CALIBRATION_SECONDS
     logger.info("Calibrating microphone for %.1f seconds...", CALIBRATION_SECONDS)
 
@@ -192,16 +212,27 @@ def main():
                 continue
 
             if noise_samples:
-                baseline = float(np.median(np.array(noise_samples, dtype=np.float32)))
-                noise_floor = max(MIN_RMS, baseline)
+                noise_floor = compute_noise_floor(noise_samples)
                 noise_samples.clear()
                 logger.info("Mic calibrated. Noise floor %.4f", noise_floor)
 
-            threshold = max(MIN_RMS, noise_floor * ENERGY_MULTIPLIER)
+            threshold = min(MAX_TRIGGER_RMS, max(MIN_TRIGGER_RMS, noise_floor * ENERGY_MULTIPLIER))
             has_voice = level >= threshold
 
+            if now - last_level_log_at >= LEVEL_LOG_INTERVAL:
+                logger.info(
+                    "Mic level %.4f threshold %.4f voice=%s",
+                    level,
+                    threshold,
+                    "yes" if has_voice else "no",
+                )
+                last_level_log_at = now
+
             if not has_voice and speech_started_at is None:
-                noise_floor = max(MIN_RMS, noise_floor * 0.98 + level * 0.02)
+                noise_floor = min(
+                    MAX_NOISE_FLOOR,
+                    max(MIN_RMS, noise_floor * 0.995 + min(level, MAX_NOISE_FLOOR) * 0.005),
+                )
                 continue
 
             if speech_started_at is None and has_voice:
