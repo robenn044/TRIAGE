@@ -16,9 +16,21 @@ const PLANNER_STEPS = [
 
 const MIN_WORDS = 2
 const MIN_CHARS = 8
+const SNAPSHOT_TIMEOUT_MS = 2_000
+const ASK_TIMEOUT_MS = 20_000
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error'
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timeout)
+  }
 }
 
 function pickVoice(): SpeechSynthesisVoice | null {
@@ -50,6 +62,7 @@ export default function CameraAskAI() {
 
   const isSpeakingRef = useRef(false)
   const processingRef = useRef(false)
+  const speechFallbackTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const lockTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const stateRef = useRef<AssistantState>('idle')
   const latestFrameRef = useRef<string | null>(null)
@@ -146,6 +159,7 @@ export default function CameraAskAI() {
   }, [mjpegUrl, cameraError, cameraReady])
 
   const speak = useCallback((text: string) => {
+    clearTimeout(speechFallbackTimerRef.current)
     speechSynthesis.cancel()
 
     const utterance = new SpeechSynthesisUtterance(text)
@@ -155,18 +169,26 @@ export default function CameraAskAI() {
     const voice = pickVoice()
     if (voice) utterance.voice = voice
 
+    const finishSpeaking = () => {
+      clearTimeout(speechFallbackTimerRef.current)
+      isSpeakingRef.current = false
+      setState(micEnabled ? 'listening' : 'idle')
+    }
+    isSpeakingRef.current = true
+    setState('speaking')
+
     utterance.onstart = () => {
-      isSpeakingRef.current = true
-      setState('speaking')
+      clearTimeout(speechFallbackTimerRef.current)
     }
-    utterance.onend = () => {
-      isSpeakingRef.current = false
-      setState(micEnabled ? 'listening' : 'idle')
-    }
+    utterance.onend = finishSpeaking
     utterance.onerror = () => {
-      isSpeakingRef.current = false
-      setState(micEnabled ? 'listening' : 'idle')
+      finishSpeaking()
     }
+
+    const estimatedMs = Math.min(12_000, Math.max(4_000, text.split(/\s+/).length * 450))
+    speechFallbackTimerRef.current = setTimeout(() => {
+      finishSpeaking()
+    }, estimatedMs)
 
     speechSynthesis.speak(utterance)
   }, [micEnabled])
@@ -180,7 +202,7 @@ export default function CameraAskAI() {
       if (image === '__mjpeg_stream__' && mjpegUrl) {
         try {
           const snapUrl = mjpegUrl.replace('/stream', '/frame')
-          const snapRes = await fetch(snapUrl)
+          const snapRes = await fetchWithTimeout(snapUrl, {}, SNAPSHOT_TIMEOUT_MS)
           if (snapRes.ok) {
             const blob = await snapRes.blob()
             const reader = new FileReader()
@@ -197,11 +219,11 @@ export default function CameraAskAI() {
         }
       }
 
-      const res = await fetch('/api/ask', {
+      const res = await fetchWithTimeout('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image, prompt }),
-      })
+      }, ASK_TIMEOUT_MS)
 
       if (!res.ok) {
         const errText = await res.text()
@@ -269,6 +291,7 @@ export default function CameraAskAI() {
   useEffect(() => {
     speechSynthesis.getVoices()
     speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices()
+    return () => clearTimeout(speechFallbackTimerRef.current)
   }, [])
 
   const statusText = (() => {
