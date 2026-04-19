@@ -416,7 +416,7 @@ export default function Itinerary() {
   const handleStartOver = () => { setCurrentStep(0); setAnswers({}); setMultiSelect([]); setTextInput(''); setGenerating(false); setDone(false); setItinerary(null); setItineraryError(null); setActiveDay(0); setDisplayPlaces([]) }
 
   useEffect(() => {
-    const TIMEOUT = 45_000; let timer: ReturnType<typeof setTimeout>
+    const TIMEOUT = 60_000; let timer: ReturnType<typeof setTimeout>
     const reset = () => { clearTimeout(timer); timer = setTimeout(() => { sessionStorage.setItem('lockReturnPath', '/itinerary'); navigate('/') }, TIMEOUT) }
     const events = ['mousemove','mousedown','keydown','touchstart','scroll'] as const
     events.forEach(e => window.addEventListener(e, reset, { passive: true })); reset()

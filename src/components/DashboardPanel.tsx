@@ -59,6 +59,7 @@ const PLANNER_STEPS = [
 
 const MEDIA_CONSENT_KEY = 'triage.media-consent'
 const MIC_PREFERENCE_KEY = 'triage.mic-enabled'
+const SESSION_LOCK_TIMEOUT_MS = 60_000
 
 function getSpeechRecognitionCtor() {
   if (typeof window === 'undefined') {
@@ -117,22 +118,22 @@ function describeMediaError(error: unknown, kind: 'camera' | 'microphone') {
         summary: 'Camera access is not available',
         detail:
           window.location.protocol !== 'https:' && window.location.hostname !== 'localhost'
-            ? 'Chrome requires HTTPS before it can request camera access.'
-            : 'This browser does not expose the camera API.',
+            ? 'Open Triage on a secure connection to use the camera.'
+            : 'This device cannot share a camera feed here.',
       }
     }
 
     if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
       return {
         summary: 'Camera permission denied',
-        detail: 'Allow camera access in Chrome and try again.',
+        detail: 'Allow camera access and try again.',
       }
     }
 
     if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       return {
         summary: 'No camera found',
-        detail: 'Chrome could not find a video input device on this system.',
+        detail: 'No camera was found on this device.',
       }
     }
 
@@ -151,32 +152,32 @@ function describeMediaError(error: unknown, kind: 'camera' | 'microphone') {
 
   if (!navigator.mediaDevices?.getUserMedia) {
     return {
-      summary: 'Microphone access is not available',
+      summary: 'Voice input is not available',
       detail:
         window.location.protocol !== 'https:' && window.location.hostname !== 'localhost'
-          ? 'Chrome requires HTTPS before it can request microphone access.'
-          : 'This browser does not expose the microphone API.',
+          ? 'Open Triage on a secure connection to use voice input.'
+          : 'This device cannot use voice input here.',
     }
   }
 
   if (!getSpeechRecognitionCtor()) {
     return {
-      summary: 'Free English STT is unavailable',
-      detail: 'Chrome speech recognition is required for the built-in free English STT.',
+      summary: 'Voice input is unavailable',
+      detail: 'Open Triage in a supported browser to use voice input.',
     }
   }
 
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
     return {
       summary: 'Microphone permission denied',
-      detail: 'Allow microphone access in Chrome to enable English speech recognition.',
+      detail: 'Allow microphone access to talk with Triage.',
     }
   }
 
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
     return {
       summary: 'No microphone found',
-      detail: 'Chrome could not find a microphone on this system.',
+      detail: 'No microphone was found on this device.',
     }
   }
 
@@ -560,8 +561,8 @@ export default function DashboardPanel() {
 
     const SpeechRecognition = getSpeechRecognitionCtor()
     if (!SpeechRecognition) {
-      setMicError('Free English STT is unavailable')
-      setMicErrorDetail('Use Chrome or Microsoft Edge to enable browser speech recognition.')
+      setMicError('Voice input is unavailable')
+      setMicErrorDetail('Open Triage in a supported browser to use voice input.')
       setState('error')
       return
     }
@@ -675,15 +676,15 @@ export default function DashboardPanel() {
         setMicEnabled(false)
         setMicPermissionGranted(false)
         setMicError('Microphone permission denied')
-        setMicErrorDetail('Allow microphone access in Chrome to use the free English STT.')
+        setMicErrorDetail('Allow microphone access to talk with Triage.')
       } else if (event.error === 'audio-capture') {
         setMicError('Microphone is not receiving sound')
-        setMicErrorDetail('Chrome has microphone access, but no audio input is reaching speech recognition. Check the selected microphone and retry.')
+        setMicErrorDetail('We cannot hear you right now. Check your microphone and try again.')
         restartRecognitionSoon(700)
         return
       } else {
-        setMicError('Speech recognition error')
-        setMicErrorDetail(`Chrome STT returned: ${event.error}`)
+        setMicError('Voice input error')
+        setMicErrorDetail('Voice input ran into a problem. Please try again.')
       }
 
       setState('error')
@@ -822,7 +823,7 @@ export default function DashboardPanel() {
       lockTimer = setTimeout(() => {
         sessionStorage.setItem('lockReturnPath', '/dashboard')
         navigate('/')
-      }, 45_000)
+      }, SESSION_LOCK_TIMEOUT_MS)
     }
 
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'] as const
@@ -931,18 +932,18 @@ export default function DashboardPanel() {
     if (cameraReady && micPermissionGranted && !micEnabled) return 'Microphone paused'
     if (cameraReady && !micPermissionGranted) return 'Camera live'
     if (state === 'error') return 'Needs attention'
-    return 'Enable inputs'
+    return 'Ready to start'
   })()
 
   const footerText = (() => {
     if (state === 'speaking' && lastAnswer) return lastAnswer
-    if (state === 'processing') return 'Sending your English transcript and current camera view to Gemma 4...'
+    if (state === 'processing') return 'Checking the scene and preparing your answer...'
     if (transcript && state === 'listening') return transcript
     if (cameraError) return cameraError
     if (micError) return micError
-    if (!cameraReady && !micPermissionGranted) return 'Allow Chrome camera and microphone access to start the live assistant.'
-    if (cameraReady && !micPermissionGranted) return 'Camera is live. Enable the microphone to turn on free English STT.'
-    if (cameraReady && micPermissionGranted && !micEnabled) return 'Microphone paused. Tap the mic button to resume English STT.'
+    if (!cameraReady && !micPermissionGranted) return 'Turn on the camera and microphone to start.'
+    if (cameraReady && !micPermissionGranted) return 'The live view is ready. Tap the mic button to speak.'
+    if (cameraReady && micPermissionGranted && !micEnabled) return 'Microphone paused. Tap the mic button to resume.'
     return 'Ask me anything about what you see...'
   })()
 
@@ -960,7 +961,7 @@ export default function DashboardPanel() {
           </div>
           <div className="min-w-0">
             <h1 className="text-xs font-semibold leading-tight tracking-tight text-white">Triage</h1>
-            <p className="text-[10px] leading-tight text-white/70">Chrome camera + free English STT</p>
+            <p className="text-[10px] leading-tight text-white/70">Your live guide in Albania</p>
           </div>
           <div className="ml-auto shrink-0 rounded-full bg-white/[0.12] px-2 py-0.5 text-[10px] font-medium text-white/80 ring-1 ring-white/[0.15]">
             {statusText}
@@ -974,7 +975,7 @@ export default function DashboardPanel() {
           <div className="flex shrink-0 items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#20a7db]">
-                Camera mode
+                Live view
               </p>
               <h2 className="mt-0.5 text-sm font-semibold leading-tight tracking-tight text-slate-900">
                 Ask me anything about what you see
@@ -1018,7 +1019,7 @@ export default function DashboardPanel() {
             <div className="pointer-events-none absolute bottom-2 right-2 z-10 h-5 w-5 rounded-br-lg border-b-2 border-r-2 border-white/40" />
 
             <div className="absolute left-2 top-2 z-20 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur-sm">
-              {cameraReady ? 'Live' : requestingAccess ? 'Requesting access...' : 'Permission needed'}
+              {cameraReady ? 'Live' : requestingAccess ? 'Getting ready...' : 'Ready when you are'}
             </div>
 
             <video
@@ -1041,29 +1042,29 @@ export default function DashboardPanel() {
                     </div>
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#7fd4ef]">
-                        Chrome access
+                        Get started
                       </p>
                       <h3 className="mt-2 text-xl font-semibold tracking-tight">
-                        Turn on the live camera and microphone.
+                        Start your live guide.
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-white/75">
-                        This asks Chrome directly for camera permission, microphone permission, free English speech-to-text, and a human English speaking voice for Gemma 4 replies.
+                        Turn on the camera and microphone to ask questions and get spoken help as you explore.
                       </p>
                     </div>
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-3">
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">Camera</p>
-                      <p className="mt-2 text-xs leading-5 text-white/70">Live Chrome `getUserMedia` feed with mirrored preview.</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">Live view</p>
+                      <p className="mt-2 text-xs leading-5 text-white/70">See the area around you while you chat with Triage.</p>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">STT</p>
-                      <p className="mt-2 text-xs leading-5 text-white/70">Free English browser speech recognition using Chrome Web Speech.</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">Voice input</p>
+                      <p className="mt-2 text-xs leading-5 text-white/70">Ask questions naturally and keep the conversation moving.</p>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">TTS</p>
-                      <p className="mt-2 text-xs leading-5 text-white/70">Human-sounding English voice preference for Gemma 4 responses.</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7fd4ef]">Spoken replies</p>
+                      <p className="mt-2 text-xs leading-5 text-white/70">Hear answers out loud while you stay focused on the moment.</p>
                     </div>
                   </div>
 
@@ -1087,7 +1088,7 @@ export default function DashboardPanel() {
                       disabled={requestingAccess}
                       className="h-10 bg-[#20a7db] px-5 text-xs shadow-sm shadow-[#20a7db]/25 hover:bg-[#1b96c5] disabled:opacity-60"
                     >
-                      {requestingAccess ? 'Requesting access...' : 'Enable camera and mic'}
+                      {requestingAccess ? 'Getting ready...' : 'Start live guide'}
                     </Button>
                     <Button
                       onClick={() => navigate('/itinerary')}
@@ -1107,10 +1108,10 @@ export default function DashboardPanel() {
                   <div className={`rounded-full px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm ${
                     micEnabled ? 'bg-[#20a7db]/85 text-white' : 'bg-black/55 text-white/80'
                   }`}>
-                    {micEnabled ? 'English STT live' : 'English STT paused'}
+                    {micEnabled ? 'Voice live' : 'Voice paused'}
                   </div>
                   <div className="rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white/80 shadow-sm backdrop-blur-sm">
-                    Human English TTS
+                    Replies out loud
                   </div>
                 </div>
 
@@ -1121,7 +1122,7 @@ export default function DashboardPanel() {
                         Microphone is paused.
                       </p>
                       <p className="mt-1 text-xs leading-5 text-white/70">
-                        Tap the mic button to enable free English speech recognition in Chrome.
+                        Tap the mic button to start talking again.
                       </p>
                     </div>
                   </div>
@@ -1133,7 +1134,7 @@ export default function DashboardPanel() {
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 backdrop-blur-sm">
                 <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
                   <Loader2 className="mx-auto h-8 w-8 animate-spin text-[#20a7db]" />
-                  <p className="mt-2 text-xs font-semibold text-slate-900">Analyzing with Gemma 4...</p>
+                  <p className="mt-2 text-xs font-semibold text-slate-900">Preparing your answer...</p>
                 </div>
               </div>
             )}
@@ -1172,9 +1173,9 @@ export default function DashboardPanel() {
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#20a7db]">
-                  Assistant stack
+                  Trip tools
                 </p>
-                <p className="text-xs font-semibold text-slate-800">Chrome media + Gemma 4 replies</p>
+                <p className="text-xs font-semibold text-slate-800">Live help + itinerary planning</p>
               </div>
             </div>
           </div>
@@ -1203,7 +1204,7 @@ export default function DashboardPanel() {
               <div className="flex items-center gap-2">
                 {micPermissionGranted ? <Mic className="h-3.5 w-3.5 text-[#20a7db]" /> : <MicOff className="h-3.5 w-3.5 text-slate-400" />}
                 <p className="text-[10px] font-semibold text-slate-800">
-                  {micPermissionGranted ? 'English STT ready' : 'Mic permission needed'}
+                  {micPermissionGranted ? 'Voice ready' : 'Mic needed'}
                 </p>
               </div>
             </div>
