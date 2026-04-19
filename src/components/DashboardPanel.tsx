@@ -269,6 +269,8 @@ export default function DashboardPanel() {
   const isSpeakingRef = useRef(false)
   const restartAfterSpeechRef = useRef(false)
   const stateRef = useRef<AssistantState>('idle')
+  const requestInFlightRef = useRef(false)
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [entered, setEntered] = useState(false)
   const [state, setState] = useState<AssistantState>('idle')
@@ -305,7 +307,11 @@ export default function DashboardPanel() {
       return
     }
 
-    window.setTimeout(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current)
+    }
+
+    restartTimerRef.current = window.setTimeout(() => {
       if (!micEnabled || !micPermissionGranted || !recognitionRef.current || isSpeakingRef.current) {
         return
       }
@@ -463,6 +469,12 @@ export default function DashboardPanel() {
   }, [cameraReady, micEnabled, micPermissionGranted, restartRecognitionSoon])
 
   const askGemma = useCallback(async (prompt: string) => {
+    if (requestInFlightRef.current) {
+      return
+    }
+
+    requestInFlightRef.current = true
+
     try {
       recognitionRef.current?.stop()
     } catch {
@@ -483,16 +495,23 @@ export default function DashboardPanel() {
       const livePrompt = [
         'You are replying inside a live voice-and-camera tourist kiosk conversation.',
         'Return only the exact final words that should be spoken to the traveler right now.',
+        'Keep it to one or two short sentences.',
         'Be warm, personal, natural, and concise.',
         'Do not include thinking process, analysis, steps, options, drafts, quotes, labels, markdown, or bullet points.',
         'If the traveler is greeting you or checking whether you can hear them, answer naturally and briefly, then offer help with Albania.',
         `Traveler message: ${prompt}`,
       ].join(' ')
 
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000)
+
       const response = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, prompt: livePrompt }),
+        body: JSON.stringify({ image, prompt: livePrompt, max_tokens: 120 }),
+        signal: controller.signal,
+      }).finally(() => {
+        clearTimeout(timeoutId)
       })
 
       if (!response.ok) {
@@ -508,8 +527,13 @@ export default function DashboardPanel() {
     } catch (error) {
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
       setState('error')
+      if (micEnabled && micPermissionGranted) {
+        restartRecognitionSoon(600)
+      }
+    } finally {
+      requestInFlightRef.current = false
     }
-  }, [speak])
+  }, [micEnabled, micPermissionGranted, restartRecognitionSoon, speak])
 
   useEffect(() => {
     const raf = requestAnimationFrame(() =>
@@ -569,7 +593,7 @@ export default function DashboardPanel() {
     }
 
     const flush = () => {
-      if (processingLock || isSpeakingRef.current) {
+      if (processingLock || isSpeakingRef.current || requestInFlightRef.current) {
         return
       }
 
@@ -589,6 +613,7 @@ export default function DashboardPanel() {
       const wordCount = text.split(/\s+/).length
       if (wordCount < 2 || text.length < 8) {
         setTranscript('')
+        restartRecognitionSoon(200)
         return
       }
 
@@ -626,13 +651,13 @@ export default function DashboardPanel() {
         accumulated += `${accumulated ? ' ' : ''}${newFinal.trim()}`
         interimText = ''
         setTranscript(accumulated)
-        resetSilenceTimer(1200)
+        resetSilenceTimer(850)
       }
 
       if (newInterim) {
         interimText = newInterim.trim()
         setTranscript(accumulated ? `${accumulated} ${interimText}` : interimText)
-        resetSilenceTimer(1800)
+        resetSilenceTimer(1200)
       }
     }
 
@@ -655,6 +680,7 @@ export default function DashboardPanel() {
         setMicError('Microphone is not receiving sound')
         setMicErrorDetail('Chrome has microphone access, but no audio input is reaching speech recognition. Check the selected microphone and retry.')
         restartRecognitionSoon(700)
+        return
       } else {
         setMicError('Speech recognition error')
         setMicErrorDetail(`Chrome STT returned: ${event.error}`)
@@ -816,6 +842,10 @@ export default function DashboardPanel() {
   useEffect(() => {
     return () => {
       try {
+        if (restartTimerRef.current) {
+          clearTimeout(restartTimerRef.current)
+          restartTimerRef.current = null
+        }
         recognitionRef.current?.stop()
       } catch {
         // ignore
