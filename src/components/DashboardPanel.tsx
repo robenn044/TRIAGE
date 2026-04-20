@@ -272,6 +272,8 @@ export default function DashboardPanel() {
   const requestInFlightRef = useRef(false)
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const micAutoPromptedRef = useRef(false)
+  const recognitionActiveRef = useRef(false)
+  const recognitionStartAttemptsRef = useRef(0)
 
   const [entered, setEntered] = useState(false)
   const [state, setState] = useState<AssistantState>('idle')
@@ -308,15 +310,36 @@ export default function DashboardPanel() {
     }
 
     restartTimerRef.current = window.setTimeout(() => {
-      if (!micPermissionGranted || !recognitionRef.current || isSpeakingRef.current) {
+      if (
+        !micPermissionGranted ||
+        !recognitionRef.current ||
+        isSpeakingRef.current ||
+        requestInFlightRef.current ||
+        recognitionActiveRef.current
+      ) {
         return
       }
+
+      recognitionStartAttemptsRef.current += 1
 
       try {
         recognitionRef.current.start()
         setState('listening')
-      } catch {
-        // ignore duplicate start attempts
+      } catch (error) {
+        const message = getErrorMessage(error).toLowerCase()
+        if (message.includes('already started') || (message.includes('start') && message.includes('active'))) {
+          recognitionActiveRef.current = true
+          return
+        }
+
+        if (recognitionStartAttemptsRef.current < 4) {
+          restartRecognitionSoon(Math.min(delayMs + 200, 1_200))
+          return
+        }
+
+        setMicError('Could not start voice input')
+        setMicErrorDetail('Microphone access is allowed, but voice input did not fully start. Retry access and keep this tab active.')
+        setState('error')
       }
     }, delayMs)
   }, [micPermissionGranted])
@@ -540,6 +563,8 @@ export default function DashboardPanel() {
 
   useEffect(() => {
     if (!micPermissionGranted) {
+      recognitionActiveRef.current = false
+      recognitionStartAttemptsRef.current = 0
       try {
         recognitionRef.current?.stop()
       } catch {
@@ -569,6 +594,8 @@ export default function DashboardPanel() {
     recognitionRef.current = recognition
 
     recognition.onstart = () => {
+      recognitionActiveRef.current = true
+      recognitionStartAttemptsRef.current = 0
       setMicError(null)
       setMicErrorDetail(null)
       stateRef.current = 'listening'
@@ -657,7 +684,12 @@ export default function DashboardPanel() {
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      recognitionActiveRef.current = false
+
       if (event.error === 'aborted') {
+        if (micPermissionGranted && !isSpeakingRef.current && stateRef.current !== 'processing') {
+          restartRecognitionSoon(200)
+        }
         return
       }
 
@@ -666,7 +698,15 @@ export default function DashboardPanel() {
         return
       }
 
+      if (event.error === 'network') {
+        setMicError('Voice input connection dropped')
+        setMicErrorDetail('Trying to restore voice input now.')
+        restartRecognitionSoon(600)
+        return
+      }
+
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        recognitionStartAttemptsRef.current = 0
         setMicPermissionGranted(false)
         setMicError('Microphone permission denied')
         setMicErrorDetail('Allow microphone access to talk with Triage.')
@@ -684,6 +724,8 @@ export default function DashboardPanel() {
     }
 
     recognition.onend = () => {
+      recognitionActiveRef.current = false
+
       if (accumulated.trim() && !processingLock && !isSpeakingRef.current) {
         clearSilenceTimer()
         flush()
@@ -697,33 +739,24 @@ export default function DashboardPanel() {
         return
       }
 
-      try {
-        recognition.start()
-        setState('listening')
-      } catch {
-        // ignore restart errors
-      }
+      restartRecognitionSoon(150)
     }
 
-    try {
-      recognition.start()
-      setState('listening')
-    } catch (error) {
-      setMicError('Could not start speech recognition')
-      setMicErrorDetail(getErrorMessage(error))
-      setState('error')
-    }
+    restartRecognitionSoon(50)
 
     return () => {
       clearSilenceTimer()
       recognition.onend = null
+      recognitionRef.current = null
+      recognitionActiveRef.current = false
+      recognitionStartAttemptsRef.current = 0
       try {
         recognition.stop()
       } catch {
         // ignore
       }
     }
-  }, [askGemma, cameraReady, micPermissionGranted])
+  }, [askGemma, cameraReady, micPermissionGranted, restartRecognitionSoon])
 
   useEffect(() => {
     const handleVoicesChanged = () => {
