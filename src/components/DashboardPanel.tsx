@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Map, MapPin, Mic, MicOff, Sparkles, Video, VideoOff } from 'lucide-react'
+import { Loader2, Map, MapPin, Mic, Sparkles, Video, VideoOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import RobotFace from './RobotFace'
 import EndTripButton from './EndTripButton'
@@ -58,7 +58,6 @@ const PLANNER_STEPS = [
 ]
 
 const MEDIA_CONSENT_KEY = 'triage.media-consent'
-const MIC_PREFERENCE_KEY = 'triage.mic-enabled'
 const SESSION_LOCK_TIMEOUT_MS = 60_000
 
 function getSpeechRecognitionCtor() {
@@ -282,17 +281,12 @@ export default function DashboardPanel() {
   const [micError, setMicError] = useState<string | null>(null)
   const [micErrorDetail, setMicErrorDetail] = useState<string | null>(null)
   const [micPermissionGranted, setMicPermissionGranted] = useState(false)
-  const [micEnabled, setMicEnabled] = useState(() => readStoredFlag(MIC_PREFERENCE_KEY, true))
   const [transcript, setTranscript] = useState('')
   const [lastAnswer, setLastAnswer] = useState('')
 
   useEffect(() => {
     stateRef.current = state
   }, [state])
-
-  useEffect(() => {
-    writeStoredFlag(MIC_PREFERENCE_KEY, micEnabled)
-  }, [micEnabled])
 
   const clearCameraStream = useCallback(() => {
     streamRef.current?.getTracks().forEach(track => track.stop())
@@ -304,7 +298,7 @@ export default function DashboardPanel() {
   }, [])
 
   const restartRecognitionSoon = useCallback((delayMs = 350) => {
-    if (!micEnabled || !micPermissionGranted || !recognitionRef.current) {
+    if (!micPermissionGranted || !recognitionRef.current) {
       return
     }
 
@@ -313,7 +307,7 @@ export default function DashboardPanel() {
     }
 
     restartTimerRef.current = window.setTimeout(() => {
-      if (!micEnabled || !micPermissionGranted || !recognitionRef.current || isSpeakingRef.current) {
+      if (!micPermissionGranted || !recognitionRef.current || isSpeakingRef.current) {
         return
       }
 
@@ -324,7 +318,7 @@ export default function DashboardPanel() {
         // ignore duplicate start attempts
       }
     }, delayMs)
-  }, [micEnabled, micPermissionGranted])
+  }, [micPermissionGranted])
 
   const requestCameraAccess = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -410,8 +404,6 @@ export default function DashboardPanel() {
       setMicPermissionGranted(false)
     }
 
-    setMicEnabled(microphoneGranted)
-
     if (cameraGranted && microphoneGranted) {
       writeStoredFlag(MEDIA_CONSENT_KEY, true)
       setState('listening')
@@ -424,7 +416,7 @@ export default function DashboardPanel() {
 
   const speak = useCallback((text: string) => {
     speechSynthesis.cancel()
-    restartAfterSpeechRef.current = micEnabled && micPermissionGranted
+    restartAfterSpeechRef.current = micPermissionGranted
     isSpeakingRef.current = true
 
     try {
@@ -467,7 +459,7 @@ export default function DashboardPanel() {
     }
 
     speechSynthesis.speak(utterance)
-  }, [cameraReady, micEnabled, micPermissionGranted, restartRecognitionSoon])
+  }, [cameraReady, micPermissionGranted, restartRecognitionSoon])
 
   const askGemma = useCallback(async (prompt: string) => {
     if (requestInFlightRef.current) {
@@ -528,13 +520,13 @@ export default function DashboardPanel() {
     } catch (error) {
       setLastAnswer(`Error: ${getErrorMessage(error)}`)
       setState('error')
-      if (micEnabled && micPermissionGranted) {
+      if (micPermissionGranted) {
         restartRecognitionSoon(600)
       }
     } finally {
       requestInFlightRef.current = false
     }
-  }, [micEnabled, micPermissionGranted, restartRecognitionSoon, speak])
+  }, [micPermissionGranted, restartRecognitionSoon, speak])
 
   useEffect(() => {
     const raf = requestAnimationFrame(() =>
@@ -545,7 +537,7 @@ export default function DashboardPanel() {
   }, [])
 
   useEffect(() => {
-    if (!micEnabled || !micPermissionGranted) {
+    if (!micPermissionGranted) {
       try {
         recognitionRef.current?.stop()
       } catch {
@@ -673,7 +665,6 @@ export default function DashboardPanel() {
       }
 
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        setMicEnabled(false)
         setMicPermissionGranted(false)
         setMicError('Microphone permission denied')
         setMicErrorDetail('Allow microphone access to talk with Triage.')
@@ -700,7 +691,7 @@ export default function DashboardPanel() {
       accumulated = ''
       interimText = ''
 
-      if (!micEnabled || !micPermissionGranted || isSpeakingRef.current || stateRef.current === 'processing') {
+      if (!micPermissionGranted || isSpeakingRef.current || stateRef.current === 'processing') {
         return
       }
 
@@ -730,7 +721,7 @@ export default function DashboardPanel() {
         // ignore
       }
     }
-  }, [askGemma, cameraReady, micEnabled, micPermissionGranted])
+  }, [askGemma, cameraReady, micPermissionGranted])
 
   useEffect(() => {
     const handleVoicesChanged = () => {
@@ -796,10 +787,7 @@ export default function DashboardPanel() {
         return
       }
 
-      const prefersMicEnabled = readStoredFlag(MIC_PREFERENCE_KEY, true)
-      setMicEnabled(restoredMic && prefersMicEnabled)
-
-      if (restoredCamera && restoredMic && prefersMicEnabled) {
+      if (restoredCamera && restoredMic) {
         setState('listening')
       } else if (restoredCamera) {
         setState('idle')
@@ -857,79 +845,50 @@ export default function DashboardPanel() {
     }
   }, [clearCameraStream])
 
-  const handleMicrophoneButton = useCallback(async () => {
-    if (requestingAccess) {
-      return
-    }
-
-    if (!micPermissionGranted) {
-      setRequestingAccess(true)
-
-      try {
-        await requestMicrophoneAccess()
-        setMicEnabled(true)
-        if (cameraReady) {
-          writeStoredFlag(MEDIA_CONSENT_KEY, true)
-        }
-        setState(cameraReady ? 'listening' : 'idle')
-      } catch (error) {
-        const mediaError = describeMediaError(error, 'microphone')
-        setMicError(mediaError.summary)
-        setMicErrorDetail(mediaError.detail)
-        setState('error')
-      } finally {
-        setRequestingAccess(false)
-      }
-
-      return
-    }
-
-    if (micEnabled) {
-      speechSynthesis.cancel()
-      isSpeakingRef.current = false
-
-      try {
-        recognitionRef.current?.stop()
-      } catch {
-        // ignore
-      }
-
-      setTranscript('')
-      setMicEnabled(false)
-      setState(cameraReady ? 'idle' : 'error')
-      return
-    }
-
-    setMicError(null)
-    setMicErrorDetail(null)
-    setMicEnabled(true)
-  }, [cameraReady, micEnabled, micPermissionGranted, requestMicrophoneAccess, requestingAccess])
-
-  const handleRetryCamera = useCallback(async () => {
+  const handleRetryAccess = useCallback(async () => {
     setRequestingAccess(true)
 
     try {
-      await requestCameraAccess()
-      if (micPermissionGranted) {
-        writeStoredFlag(MEDIA_CONSENT_KEY, true)
+      let nextCameraReady = cameraReady
+      let nextMicReady = micPermissionGranted
+
+      if (!cameraReady) {
+        await requestCameraAccess()
+        nextCameraReady = true
       }
-      setState(micEnabled && micPermissionGranted ? 'listening' : 'idle')
+
+      if (!micPermissionGranted) {
+        await requestMicrophoneAccess()
+        nextMicReady = true
+      }
+
+      if (nextCameraReady && nextMicReady) {
+        writeStoredFlag(MEDIA_CONSENT_KEY, true)
+        setState('listening')
+      } else if (nextCameraReady) {
+        setState('idle')
+      }
     } catch (error) {
-      const mediaError = describeMediaError(error, 'camera')
-      setCameraError(mediaError.summary)
-      setCameraErrorDetail(mediaError.detail)
+      const failedKind = cameraReady ? 'microphone' : 'camera'
+      const mediaError = describeMediaError(error, failedKind)
+      if (failedKind === 'camera') {
+        setCameraError(mediaError.summary)
+        setCameraErrorDetail(mediaError.detail)
+      } else {
+        setMicError(mediaError.summary)
+        setMicErrorDetail(mediaError.detail)
+      }
       setState('error')
     } finally {
       setRequestingAccess(false)
     }
-  }, [micEnabled, micPermissionGranted, requestCameraAccess])
+  }, [cameraReady, micPermissionGranted, requestCameraAccess, requestMicrophoneAccess])
 
   const statusText = (() => {
     if (requestingAccess) return 'Requesting access...'
     if (state === 'listening') return 'Listening...'
     if (state === 'processing') return 'Thinking...'
     if (state === 'speaking') return 'Speaking...'
-    if (cameraReady && micPermissionGranted && !micEnabled) return 'Microphone paused'
     if (cameraReady && !micPermissionGranted) return 'Camera live'
     if (state === 'error') return 'Needs attention'
     return 'Ready to start'
@@ -942,8 +901,7 @@ export default function DashboardPanel() {
     if (cameraError) return cameraError
     if (micError) return micError
     if (!cameraReady && !micPermissionGranted) return 'Turn on the camera and microphone to start.'
-    if (cameraReady && !micPermissionGranted) return 'The live view is ready. Tap the mic button to speak.'
-    if (cameraReady && micPermissionGranted && !micEnabled) return 'Microphone paused. Tap the mic button to resume.'
+    if (cameraReady && !micPermissionGranted) return 'The live view is ready. Allow microphone access to keep the guide listening.'
     return 'Ask me anything about what you see...'
   })()
 
@@ -982,17 +940,6 @@ export default function DashboardPanel() {
               </h2>
             </div>
             <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#20a7db]/[0.12] bg-[#f4fbfe] p-1">
-              <Button
-                onClick={handleMicrophoneButton}
-                size="lg"
-                className={`h-9 w-9 rounded-full p-0 shadow-sm ${
-                  micEnabled
-                    ? 'bg-[#20a7db] shadow-[#20a7db]/25 hover:bg-[#1b96c5]'
-                    : 'bg-red-500 shadow-red-500/25 hover:bg-red-600'
-                }`}
-              >
-                {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-              </Button>
               <Button
                 onClick={() => navigate('/itinerary')}
                 size="lg"
@@ -1106,27 +1053,14 @@ export default function DashboardPanel() {
               <>
                 <div className="absolute right-2 top-2 z-20 flex items-center gap-2">
                   <div className={`rounded-full px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm ${
-                    micEnabled ? 'bg-[#20a7db]/85 text-white' : 'bg-black/55 text-white/80'
+                    micPermissionGranted ? 'bg-[#20a7db]/85 text-white' : 'bg-black/55 text-white/80'
                   }`}>
-                    {micEnabled ? 'Voice live' : 'Voice paused'}
+                    {micPermissionGranted ? 'Voice live' : 'Voice needed'}
                   </div>
                   <div className="rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white/80 shadow-sm backdrop-blur-sm">
                     Replies out loud
                   </div>
                 </div>
-
-                {!micEnabled && (
-                  <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-slate-950/90 to-transparent px-4 pb-4 pt-12">
-                    <div className="mx-auto max-w-[420px] rounded-2xl border border-white/10 bg-black/45 px-4 py-3 text-center backdrop-blur-sm">
-                      <p className="text-sm font-semibold text-white">
-                        Microphone is paused.
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-white/70">
-                        Tap the mic button to start talking again.
-                      </p>
-                    </div>
-                  </div>
-                )}
               </>
             )}
 
@@ -1202,7 +1136,7 @@ export default function DashboardPanel() {
             </div>
             <div className="rounded-xl border border-[#20a7db]/10 bg-white px-2.5 py-2">
               <div className="flex items-center gap-2">
-                {micPermissionGranted ? <Mic className="h-3.5 w-3.5 text-[#20a7db]" /> : <MicOff className="h-3.5 w-3.5 text-slate-400" />}
+                <Mic className={`h-3.5 w-3.5 ${micPermissionGranted ? 'text-[#20a7db]' : 'text-slate-400'}`} />
                 <p className="text-[10px] font-semibold text-slate-800">
                   {micPermissionGranted ? 'Voice ready' : 'Mic needed'}
                 </p>
@@ -1212,11 +1146,11 @@ export default function DashboardPanel() {
 
           <div className="mt-auto grid gap-1.5 pt-3">
             <Button
-              onClick={handleRetryCamera}
+              onClick={handleRetryAccess}
               variant="outline"
               className="h-9 border-[#20a7db]/[0.18] bg-white text-xs"
             >
-              Retry camera
+              Retry access
             </Button>
           <Button
             onClick={() => navigate('/itinerary')}
