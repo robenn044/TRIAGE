@@ -271,6 +271,7 @@ export default function DashboardPanel() {
   const stateRef = useRef<AssistantState>('idle')
   const requestInFlightRef = useRef(false)
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const micAutoPromptedRef = useRef(false)
 
   const [entered, setEntered] = useState(false)
   const [state, setState] = useState<AssistantState>('idle')
@@ -376,6 +377,7 @@ export default function DashboardPanel() {
 
     tempStream.getTracks().forEach(track => track.stop())
     setMicPermissionGranted(true)
+    micAutoPromptedRef.current = true
   }, [])
 
   const enableInputs = useCallback(async () => {
@@ -802,6 +804,51 @@ export default function DashboardPanel() {
       cancelled = true
     }
   }, [requestCameraAccess, requestMicrophoneAccess])
+
+  useEffect(() => {
+    if (!cameraReady) {
+      micAutoPromptedRef.current = false
+      return
+    }
+
+    if (micPermissionGranted || requestingAccess || micAutoPromptedRef.current) {
+      return
+    }
+
+    let cancelled = false
+    micAutoPromptedRef.current = true
+
+    const promptForMicrophone = async () => {
+      setRequestingAccess(true)
+
+      try {
+        await requestMicrophoneAccess()
+        writeStoredFlag(MEDIA_CONSENT_KEY, true)
+        if (!cancelled) {
+          setState('listening')
+        }
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        const mediaError = describeMediaError(error, 'microphone')
+        setMicError(mediaError.summary)
+        setMicErrorDetail(mediaError.detail)
+        setState('error')
+      } finally {
+        if (!cancelled) {
+          setRequestingAccess(false)
+        }
+      }
+    }
+
+    void promptForMicrophone()
+
+    return () => {
+      cancelled = true
+    }
+  }, [cameraReady, micPermissionGranted, requestMicrophoneAccess, requestingAccess])
 
   useEffect(() => {
     let lockTimer: ReturnType<typeof setTimeout>
